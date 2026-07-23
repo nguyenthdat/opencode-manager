@@ -13,6 +13,7 @@ to this package and 2FA bypass enabled only for publishing.
 ```bash
 export NPM_TOKEN=...
 bun ci
+bun run format:check
 bun run typecheck
 bun test
 bun run build
@@ -35,13 +36,13 @@ https://www.npmjs.com/package/@nguyenthdat/opencode-manager/access
 
 Under **Trusted Publisher**, select **GitHub Actions** and enter:
 
-| Field | Value |
-| --- | --- |
-| Organization or user | `nguyenthdat` |
-| Repository | `opencode-manager` |
-| Workflow filename | `publish-npm.yml` |
-| Environment | Leave empty |
-| Allowed action | Publish |
+| Field                | Value              |
+| -------------------- | ------------------ |
+| Organization or user | `nguyenthdat`      |
+| Repository           | `opencode-manager` |
+| Workflow filename    | `publish-npm.yml`  |
+| Environment          | Leave empty        |
+| Allowed action       | Publish            |
 
 The workflow filename must match `.github/workflows/publish-npm.yml` exactly.
 It grants `id-token: write`, runs on GitHub-hosted Ubuntu, uses Node 24, and
@@ -70,6 +71,7 @@ Update `package.json` and `bun.lock` to the same semantic version, rebuild
 
 ```bash
 bun install
+bun run format:check
 bun run build
 bun run typecheck
 bun test

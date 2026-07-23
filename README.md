@@ -134,12 +134,12 @@ metadata and a valid OpenCode MCP config:
         "type": "local",
         "command": ["bunx", "-y", "@example/postgres-mcp"],
         "environment": {
-          "DATABASE_URL": "{env:DATABASE_URL}"
+          "DATABASE_URL": "{env:DATABASE_URL}",
         },
-        "enabled": false
-      }
-    }
-  }
+        "enabled": false,
+      },
+    },
+  },
 }
 ```
 
@@ -170,9 +170,9 @@ Plugin entries add reviewed packages to the active project's OpenCode config:
       "title": "Svelte",
       "description": "Official Svelte integration for OpenCode.",
       "tags": ["svelte", "frontend"],
-      "package": "@sveltejs/opencode"
-    }
-  }
+      "package": "@sveltejs/opencode",
+    },
+  },
 }
 ```
 
@@ -249,9 +249,9 @@ rules, the manager uses OpenCode's additive `instructions` configuration:
       "title": "Codebase Memory First",
       "description": "Prefer the project code graph for code discovery.",
       "tags": ["code-intelligence"],
-      "path": "rules/codebase-memory.md"
-    }
-  }
+      "path": "rules/codebase-memory.md",
+    },
+  },
 }
 ```
 
@@ -279,16 +279,16 @@ An agent entry has one of two types:
       "title": "Search Researcher",
       "description": "Returns source-backed research.",
       "tags": ["research"],
-      "path": "agents/search.md"
+      "path": "agents/search.md",
     },
     "review-team": {
       "type": "team",
       "title": "Review Team",
       "description": "Lead, security, and quality reviewers.",
       "tags": ["code-review"],
-      "path": "agents/review-team"
-    }
-  }
+      "path": "agents/review-team",
+    },
+  },
 }
 ```
 
@@ -325,9 +325,9 @@ Vendor sources live under `skillSources`:
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "skillsPath": "skills",
       "license": "Apache-2.0",
-      "ignoreSymlinks": false
-    }
-  }
+      "ignoreSymlinks": false,
+    },
+  },
 }
 ```
 
@@ -346,20 +346,20 @@ and displayed as part of that bundle.
 
 The requested source expansion adds these pinned collections:
 
-| Source ID | Repository | Canonical path | Bundles |
-| --- | --- | --- | ---: |
-| `k-dense-scientific` | `K-Dense-AI/scientific-agent-skills` | `skills` | 149 |
-| `pm-skills` | `phuryn/pm-skills` | repository root | 68 |
-| `marketing-skills` | `coreyhaines31/marketingskills` | `skills` | 48 |
-| `addy-agent-skills` | `addyosmani/agent-skills` | `skills` | 24 |
-| `microsoft-core` | `microsoft/skills` | `.github/skills` | 13 |
-| `microsoft` | `microsoft/skills` | `.github/plugins` | 169 |
-| `qt` | `TheQtCompanyRnD/agent-skills` | `skills` | 12 |
-| `huggingface` | `huggingface/skills` | `skills` | 25 |
-| `finance` | `himself65/finance-skills` | `plugins` | 26 |
-| `marketcalls-vectorbt` | `marketcalls/vectorbt-backtesting-skills` | `.claude/skills` | 6 |
-| `agiprolabs-trading` | `agiprolabs/claude-trading-skills` | `skills` | 67 |
-| `okx` | `okx/agent-skills` | `skills` | 11 |
+| Source ID              | Repository                                | Canonical path    | Bundles |
+| ---------------------- | ----------------------------------------- | ----------------- | ------: |
+| `k-dense-scientific`   | `K-Dense-AI/scientific-agent-skills`      | `skills`          |     149 |
+| `pm-skills`            | `phuryn/pm-skills`                        | repository root   |      68 |
+| `marketing-skills`     | `coreyhaines31/marketingskills`           | `skills`          |      48 |
+| `addy-agent-skills`    | `addyosmani/agent-skills`                 | `skills`          |      24 |
+| `microsoft-core`       | `microsoft/skills`                        | `.github/skills`  |      13 |
+| `microsoft`            | `microsoft/skills`                        | `.github/plugins` |     169 |
+| `qt`                   | `TheQtCompanyRnD/agent-skills`            | `skills`          |      12 |
+| `huggingface`          | `huggingface/skills`                      | `skills`          |      25 |
+| `finance`              | `himself65/finance-skills`                | `plugins`         |      26 |
+| `marketcalls-vectorbt` | `marketcalls/vectorbt-backtesting-skills` | `.claude/skills`  |       6 |
+| `agiprolabs-trading`   | `agiprolabs/claude-trading-skills`        | `skills`          |      67 |
+| `okx`                  | `okx/agent-skills`                        | `skills`          |      11 |
 
 `phuryn/pm-skill` does not exist; the registry uses the upstream repository's
 actual plural name, `phuryn/pm-skills`. The duplicated K-Dense request is
@@ -416,12 +416,12 @@ agent or team IDs:
       "mcps": ["postgres"],
       "skills": [
         { "source": "custom", "path": "schema-review" },
-        { "source": "clickhouse", "path": "clickhouse-best-practices" }
+        { "source": "clickhouse", "path": "clickhouse-best-practices" },
       ],
       "rules": ["codebase-memory"],
-      "agents": ["review-team"]
-    }
-  ]
+      "agents": ["review-team"],
+    },
+  ],
 }
 ```
 
@@ -455,10 +455,20 @@ disable or remove unrelated MCPs, rules, agents, or project skills.
 
 ```bash
 bun install
+bun run format
+bun run format:check
 bun run build
 bun run typecheck
 bun test
 ```
+
+`bun install` runs the `prepare` script and installs the repository's
+`pre-commit` hook through `simple-git-hooks`. Before every commit,
+`lint-staged` formats only staged TypeScript, JavaScript, project JSON/JSONC,
+workflow YAML, and maintained documentation, then re-stages the formatted
+content while preserving unrelated unstaged hunks. Generated `dist/` files and
+vendored `registry/skills/` content are intentionally excluded. CI and release
+workflows run `format:check` as the non-bypassable enforcement layer.
 
 Release and npm Trusted Publishing instructions are in
 [`docs/RELEASING.md`](https://github.com/nguyenthdat/opencode-manager/blob/main/docs/RELEASING.md).

@@ -76,9 +76,7 @@ async function writeAtomic(file: string, source: string): Promise<void> {
   }
 }
 
-export async function updateSkillSourceRevisions(
-  options: UpdateRevisionOptions = {},
-): Promise<RevisionChange[]> {
+export async function updateSkillSourceRevisions(options: UpdateRevisionOptions = {}): Promise<RevisionChange[]> {
   const catalogPath = resolve(options.catalogPath ?? DEFAULT_CATALOG);
   const catalog = await loadCatalog({ catalogPath });
   const resolveRevision = options.resolveRevision ?? resolveGitHead;

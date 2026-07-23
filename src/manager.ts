@@ -264,15 +264,9 @@ interface TreeEntry {
   content?: Buffer;
 }
 
-type TreeInspection =
-  | { kind: "absent" }
-  | { kind: "unsupported" }
-  | { kind: "directory"; digest: string };
+type TreeInspection = { kind: "absent" } | { kind: "unsupported" } | { kind: "directory"; digest: string };
 
-type FileInspection =
-  | { kind: "absent" }
-  | { kind: "unsupported" }
-  | { kind: "file"; digest: string };
+type FileInspection = { kind: "absent" } | { kind: "unsupported" } | { kind: "file"; digest: string };
 
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -328,9 +322,7 @@ function parseJsonc(file: string, source: string): JsonObject {
   const errors: ParseError[] = [];
   const root = parseTree(source, errors, { allowTrailingComma: true, disallowComments: false });
   if (errors.length > 0) {
-    const details = errors
-      .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
-      .join(", ");
+    const details = errors.map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`).join(", ");
     throw new Error(`[opencode-manager] Invalid JSONC in ${file}: ${details}`);
   }
   if (!root || root.type !== "object") throw new Error(`[opencode-manager] ${file} must contain an object`);
@@ -363,7 +355,11 @@ function validateMcpConfig(id: string, input: unknown): JsonObject {
     if (!allowed.has(key)) throw new Error(`[opencode-manager] MCP "${id}" has unsupported field "${key}"`);
   }
   if (type === "local") {
-    if (!Array.isArray(input.command) || input.command.length === 0 || input.command.some((item) => typeof item !== "string")) {
+    if (
+      !Array.isArray(input.command) ||
+      input.command.length === 0 ||
+      input.command.some((item) => typeof item !== "string")
+    ) {
       throw new Error(`[opencode-manager] MCP "${id}" command must be a non-empty string array`);
     }
   } else {
@@ -510,7 +506,8 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
   for (const raw of value.profiles) {
     if (!isObject(raw)) throw new Error("[opencode-manager] Every profile must be an object");
     const id = text(raw.id, "profile id");
-    if (!ID_PATTERN.test(id) || profileIDs.has(id)) throw new Error(`[opencode-manager] Invalid or duplicate profile "${id}"`);
+    if (!ID_PATTERN.test(id) || profileIDs.has(id))
+      throw new Error(`[opencode-manager] Invalid or duplicate profile "${id}"`);
     profileIDs.add(id);
     const profileMcps = stringList(raw.mcps ?? [], `profile "${id}" mcps`);
     for (const mcp of profileMcps) {
@@ -520,7 +517,8 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     const skills = raw.skills.map((item, index): ProfileSkillRef => {
       if (!isObject(item)) throw new Error(`[opencode-manager] Profile "${id}" skill ${index} must be an object`);
       const source = text(item.source, `profile "${id}" skill source`);
-      if (!skillSources[source]) throw new Error(`[opencode-manager] Profile "${id}" references unknown skill source "${source}"`);
+      if (!skillSources[source])
+        throw new Error(`[opencode-manager] Profile "${id}" references unknown skill source "${source}"`);
       return { source, path: safeRelativePath(item.path, `profile "${id}" skill path`) };
     });
     const profileRules = stringList(raw.rules ?? [], `profile "${id}" rules`);
@@ -529,7 +527,8 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     }
     const profileAgents = stringList(raw.agents ?? [], `profile "${id}" agents`);
     for (const agent of profileAgents) {
-      if (!own(agents, agent)) throw new Error(`[opencode-manager] Profile "${id}" references unknown agent "${agent}"`);
+      if (!own(agents, agent))
+        throw new Error(`[opencode-manager] Profile "${id}" references unknown agent "${agent}"`);
     }
     profiles.push({
       id,
@@ -653,28 +652,31 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
   }
   const plugins: Record<string, ManagedPluginState> = {};
   for (const [id, raw] of Object.entries((value.plugins ?? {}) as JsonObject)) {
-    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed plugin state "${id}"`);
+    if (!ID_PATTERN.test(id) || !isObject(raw))
+      throw new Error(`[opencode-manager] Invalid managed plugin state "${id}"`);
     plugins[id] = { package: text(raw.package, `managed plugin "${id}" package`) };
   }
   const rules: Record<string, ManagedRuleState> = {};
   for (const [id, raw] of Object.entries((value.rules ?? {}) as JsonObject)) {
-    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed rule state "${id}"`);
+    if (!ID_PATTERN.test(id) || !isObject(raw))
+      throw new Error(`[opencode-manager] Invalid managed rule state "${id}"`);
     rules[id] = {
       title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
-      description: typeof raw.description === "string" && raw.description.trim()
-        ? raw.description
-        : `Managed rule ${id}`,
+      description:
+        typeof raw.description === "string" && raw.description.trim() ? raw.description : `Managed rule ${id}`,
       tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed rule "${id}" tags`),
       path: raw.path === undefined ? `rules/${id}.md` : safeRelativePath(raw.path, `managed rule "${id}" path`),
       digest: text(raw.digest, `managed rule "${id}" digest`),
-      configFile: raw.configFile === undefined
-        ? await inferLegacyRuleConfigFile(context, id)
-        : safeRelativePath(raw.configFile, `managed rule "${id}" configFile`),
+      configFile:
+        raw.configFile === undefined
+          ? await inferLegacyRuleConfigFile(context, id)
+          : safeRelativePath(raw.configFile, `managed rule "${id}" configFile`),
     };
   }
   const agents: Record<string, ManagedAgentState> = {};
   for (const [id, raw] of Object.entries((value.agents ?? {}) as JsonObject)) {
-    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed agent state "${id}"`);
+    if (!ID_PATTERN.test(id) || !isObject(raw))
+      throw new Error(`[opencode-manager] Invalid managed agent state "${id}"`);
     const digest = text(raw.digest, `managed agent "${id}" digest`);
     let type: AgentRegistryEntry["type"];
     if (raw.type === "single" || raw.type === "team") {
@@ -692,7 +694,7 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
       else if (single.kind === "absent" && team.kind === "absent") type = "single";
       else throw new Error(`[opencode-manager] Cannot safely infer legacy managed agent "${id}" type from its digest`);
     }
-    let members = Number.isInteger(raw.members) && (raw.members as number) > 0 ? raw.members as number : 1;
+    let members = Number.isInteger(raw.members) && (raw.members as number) > 0 ? (raw.members as number) : 1;
     if (raw.members === undefined && type === "team") {
       const destination = agentDestination(context, id, "team");
       const inspection = await inspectTree(destination, `Managed agent team "${id}"`);
@@ -703,13 +705,13 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
     agents[id] = {
       type,
       title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
-      description: typeof raw.description === "string" && raw.description.trim()
-        ? raw.description
-        : `Managed agent ${id}`,
+      description:
+        typeof raw.description === "string" && raw.description.trim() ? raw.description : `Managed agent ${id}`,
       tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed agent "${id}" tags`),
-      path: raw.path === undefined
-        ? `agents/${id}${type === "single" ? ".md" : ""}`
-        : safeRelativePath(raw.path, `managed agent "${id}" path`),
+      path:
+        raw.path === undefined
+          ? `agents/${id}${type === "single" ? ".md" : ""}`
+          : safeRelativePath(raw.path, `managed agent "${id}" path`),
       digest,
       members,
     };
@@ -835,12 +837,14 @@ async function resolveRuleConfigFile(context: ProjectContext, path: string, labe
   const normalized = safeRelativePath(path, label);
   const file = resolve(context.root, normalized);
   if (!isWithin(file, context.root)) throw new Error(`[opencode-manager] ${label} escapes project root`);
-  const supported = new Set([
-    join(context.configDir, "opencode.jsonc"),
-    join(context.configDir, "opencode.json"),
-    join(context.root, "opencode.jsonc"),
-    join(context.root, "opencode.json"),
-  ].map((candidate) => resolve(candidate)));
+  const supported = new Set(
+    [
+      join(context.configDir, "opencode.jsonc"),
+      join(context.configDir, "opencode.json"),
+      join(context.root, "opencode.jsonc"),
+      join(context.root, "opencode.json"),
+    ].map((candidate) => resolve(candidate)),
+  );
   if (!supported.has(file)) throw new Error(`[opencode-manager] ${label} is not a supported OpenCode project config`);
   const parent = dirname(file);
   const canonicalParent = await realpath(parent);
@@ -849,7 +853,7 @@ async function resolveRuleConfigFile(context: ProjectContext, path: string, labe
   }
   try {
     const info = await lstat(file);
-    if (info.isSymbolicLink() || !info.isFile() || await realpath(file) !== file) {
+    if (info.isSymbolicLink() || !info.isFile() || (await realpath(file)) !== file) {
       throw new Error(`[opencode-manager] ${label} changed or is not a regular project config`);
     }
   } catch (error) {
@@ -937,16 +941,24 @@ function registryValueMatches(expected: unknown, actual: unknown): boolean {
     return referencePattern(expected)?.test(actual) ?? expected === actual;
   }
   if (Array.isArray(expected)) {
-    return Array.isArray(actual) &&
+    return (
+      Array.isArray(actual) &&
       expected.length === actual.length &&
-      expected.every((item, index) => registryValueMatches(item, actual[index]));
+      expected.every((item, index) => registryValueMatches(item, actual[index]))
+    );
   }
   if (isObject(expected)) {
     if (!isObject(actual)) return false;
-    const expectedKeys = Object.keys(expected).filter((key) => key !== "enabled").sort();
-    const actualKeys = Object.keys(actual).filter((key) => key !== "enabled").sort();
-    return expectedKeys.length === actualKeys.length &&
-      expectedKeys.every((key, index) => key === actualKeys[index] && registryValueMatches(expected[key], actual[key]));
+    const expectedKeys = Object.keys(expected)
+      .filter((key) => key !== "enabled")
+      .sort();
+    const actualKeys = Object.keys(actual)
+      .filter((key) => key !== "enabled")
+      .sort();
+    return (
+      expectedKeys.length === actualKeys.length &&
+      expectedKeys.every((key, index) => key === actualKeys[index] && registryValueMatches(expected[key], actual[key]))
+    );
   }
   return Object.is(expected, actual);
 }
@@ -962,12 +974,19 @@ function classifyMcp(
   managed: ManagedMcpState | undefined,
 ): Omit<McpStatus, "id" | "title" | "description" | "tags" | "type"> {
   const candidate = mcpDefinition(raw) ? raw : inherited;
-  const enabled = isObject(raw) && typeof raw.enabled === "boolean"
-    ? raw.enabled
-    : isObject(inherited) && typeof inherited.enabled === "boolean"
-      ? inherited.enabled
-      : entry.config.enabled === true;
-  const ownership = managed ? "manager" : raw !== undefined ? "project" : inherited !== undefined ? "inherited" : "absent";
+  const enabled =
+    isObject(raw) && typeof raw.enabled === "boolean"
+      ? raw.enabled
+      : isObject(inherited) && typeof inherited.enabled === "boolean"
+        ? inherited.enabled
+        : entry.config.enabled === true;
+  const ownership = managed
+    ? "manager"
+    : raw !== undefined
+      ? "project"
+      : inherited !== undefined
+        ? "inherited"
+        : "absent";
   if (candidate && !matchesMcpRegistry(entry, candidate)) {
     return { enabled, status: "conflict", ownership };
   }
@@ -975,7 +994,11 @@ function classifyMcp(
     return { enabled, status: "conflict", ownership };
   }
   if (!candidate && raw !== undefined) return { enabled, status: "conflict", ownership };
-  return { enabled, status: enabled ? "enabled" : raw === undefined && inherited === undefined ? "absent" : "disabled", ownership };
+  return {
+    enabled,
+    status: enabled ? "enabled" : raw === undefined && inherited === undefined ? "absent" : "disabled",
+    ownership,
+  };
 }
 
 export async function listMcps(options: ManagerOptions): Promise<McpStatus[]> {
@@ -1047,7 +1070,9 @@ export async function setMcpEnabled(
       } else {
         nextSource = applyEdits(
           config.source,
-          modify(config.source, ["mcp", id, "enabled"], enabled, { formattingOptions: { insertSpaces: true, tabSize: 2 } }),
+          modify(config.source, ["mcp", id, "enabled"], enabled, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }),
         );
       }
     } else if (mcpDefinition(inherited)) {
@@ -1064,7 +1089,9 @@ export async function setMcpEnabled(
       } else {
         nextSource = applyEdits(
           config.source,
-          modify(config.source, ["mcp", id, "enabled"], enabled, { formattingOptions: { insertSpaces: true, tabSize: 2 } }),
+          modify(config.source, ["mcp", id, "enabled"], enabled, {
+            formattingOptions: { insertSpaces: true, tabSize: 2 },
+          }),
         );
       }
     } else {
@@ -1094,11 +1121,11 @@ export async function setMcpEnabled(
 function pluginSpecifier(value: unknown): string | undefined {
   if (typeof value === "string" && value.trim() !== "") return value;
   if (
-    Array.isArray(value)
-    && value.length === 2
-    && typeof value[0] === "string"
-    && value[0].trim() !== ""
-    && isObject(value[1])
+    Array.isArray(value) &&
+    value.length === 2 &&
+    typeof value[0] === "string" &&
+    value[0].trim() !== "" &&
+    isObject(value[1])
   ) {
     return value[0];
   }
@@ -1108,7 +1135,9 @@ function pluginSpecifier(value: unknown): string | undefined {
 function projectPlugins(config: ProjectConfig): unknown[] {
   if (config.value.plugin === undefined) return [];
   if (!Array.isArray(config.value.plugin) || config.value.plugin.some((value) => !pluginSpecifier(value))) {
-    throw new Error(`[opencode-manager] Project config "plugin" must be an array of package strings or [package, options] tuples`);
+    throw new Error(
+      `[opencode-manager] Project config "plugin" must be an array of package strings or [package, options] tuples`,
+    );
   }
   return [...config.value.plugin];
 }
@@ -1135,9 +1164,7 @@ function managedPluginIndices(
   packageName: string,
   managed: ManagedPluginState | undefined,
 ): number[] {
-  const packageNames = managed && managed.package !== packageName
-    ? [packageName, managed.package]
-    : [packageName];
+  const packageNames = managed && managed.package !== packageName ? [packageName, managed.package] : [packageName];
   return values.flatMap((value, index) =>
     packageNames.some((candidate) => matchesPluginPackage(value, candidate)) ? [index] : [],
   );
@@ -1163,14 +1190,14 @@ export async function listPlugins(options: ManagerOptions): Promise<PluginStatus
         : inheritedMatches.length > 0
           ? "inherited"
           : "absent";
-    const conflict = rawMatches.length > 1
-      || inheritedMatches.length > 1
-      || (candidate !== undefined && !exactPluginPackage(candidate, entry.package))
-      || (managed !== undefined && (
-        managed.package !== entry.package
-        || rawMatches.length !== 1
-        || !exactPluginPackage(rawMatches[0], entry.package)
-      ));
+    const conflict =
+      rawMatches.length > 1 ||
+      inheritedMatches.length > 1 ||
+      (candidate !== undefined && !exactPluginPackage(candidate, entry.package)) ||
+      (managed !== undefined &&
+        (managed.package !== entry.package ||
+          rawMatches.length !== 1 ||
+          !exactPluginPackage(rawMatches[0], entry.package)));
     return {
       id,
       ...entry,
@@ -1233,7 +1260,9 @@ export async function setPluginEnabled(
             throw new Error(`[opencode-manager] Plugin "${id}" was modified after manager installation`);
           }
           if (inheritedMatches.length !== 1 || !exactPluginPackage(inheritedMatches[0], entry.package)) {
-            throw new Error(`[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`);
+            throw new Error(
+              `[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`,
+            );
           }
           delete state.plugins[id];
         } else if (managed.package !== entry.package || !exactLocal) {
@@ -1257,7 +1286,9 @@ export async function setPluginEnabled(
         }
       } else if (inheritedMatches.length > 0) {
         if (inheritedMatches.length !== 1 || !exactPluginPackage(inheritedMatches[0], entry.package)) {
-          throw new Error(`[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`);
+          throw new Error(
+            `[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`,
+          );
         }
       } else {
         nextSource = appendProjectPlugin(config, nextSource, entry.package);
@@ -1352,11 +1383,19 @@ async function ensureGitSource(context: ProjectContext, id: string, source: GitS
   const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
   const previous = `${target}.${process.pid}.${randomUUID()}.old`;
   try {
-    await runGit(["clone", "--filter=blob:none", "--no-checkout", "--no-recurse-submodules", source.repository, temporary]);
+    await runGit([
+      "clone",
+      "--filter=blob:none",
+      "--no-checkout",
+      "--no-recurse-submodules",
+      source.repository,
+      temporary,
+    ]);
     await runGit(["-C", temporary, "fetch", "--depth", "1", "origin", source.revision]);
     await runGit(["-C", temporary, "checkout", "--detach", "FETCH_HEAD"]);
     const head = await runGit(["-C", temporary, "rev-parse", "HEAD"]);
-    if (head !== source.revision) throw new Error(`[opencode-manager] Source "${id}" resolved to unexpected commit ${head}`);
+    if (head !== source.revision)
+      throw new Error(`[opencode-manager] Source "${id}" resolved to unexpected commit ${head}`);
     try {
       await lstat(join(temporary, ".gitmodules"));
       throw new Error(`[opencode-manager] Source "${id}" contains submodules, which are not supported`);
@@ -1387,9 +1426,8 @@ async function ensureGitSource(context: ProjectContext, id: string, source: GitS
 async function skillSourceRoot(catalog: LoadedCatalog, context: ProjectContext, id: string): Promise<string> {
   const source = catalog.skillSources[id];
   if (!source) throw new Error(`[opencode-manager] Unknown skill source "${id}"`);
-  const root = source.type === "local"
-    ? resolve(catalog.root, source.path)
-    : await ensureGitSource(context, id, source);
+  const root =
+    source.type === "local" ? resolve(catalog.root, source.path) : await ensureGitSource(context, id, source);
   const canonicalRoot = await realpath(root);
   if (source.type === "local") {
     const canonicalCatalogRoot = await realpath(catalog.root);
@@ -1416,17 +1454,17 @@ async function collectTree(root: string, label = "Skill tree"): Promise<TreeEntr
       if (info.isSymbolicLink()) throw new Error(`[opencode-manager] ${label} contains symlink "${path}"`);
       if (info.isDirectory()) {
         entries.push({ path: `${path}/`, mode: info.mode & 0o777 });
-         if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
+        if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
         await visit(absolute, path);
         continue;
       }
-       if (!info.isFile()) throw new Error(`[opencode-manager] ${label} contains unsupported entry "${path}"`);
-       if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] ${label} file "${path}" is too large`);
+      if (!info.isFile()) throw new Error(`[opencode-manager] ${label} contains unsupported entry "${path}"`);
+      if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] ${label} file "${path}" is too large`);
       bytes += info.size;
-       if (bytes > MAX_TREE_BYTES) throw new Error(`[opencode-manager] ${label} is too large`);
+      if (bytes > MAX_TREE_BYTES) throw new Error(`[opencode-manager] ${label} is too large`);
       const content = await readFile(absolute);
       entries.push({ path, mode: info.mode & 0o777, content });
-       if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
+      if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
     }
   }
   await visit(root, "");
@@ -1476,7 +1514,13 @@ function parseMarkdownFrontmatter(file: string, source: string): { data: JsonObj
   if (end < 0) throw new Error(`[opencode-manager] Agent ${file} has unterminated YAML frontmatter`);
   const data = parseYaml(lines.slice(1, end).join("\n")) as unknown;
   if (!isObject(data)) throw new Error(`[opencode-manager] Agent ${file} frontmatter must be an object`);
-  return { data, content: lines.slice(end + 1).join("\n").trim() };
+  return {
+    data,
+    content: lines
+      .slice(end + 1)
+      .join("\n")
+      .trim(),
+  };
 }
 
 function validateAgentDocument(file: string, source: string, expectedName: string): void {
@@ -1508,16 +1552,18 @@ function validateAgentDocument(file: string, source: string, expectedName: strin
       throw new Error(`[opencode-manager] Agent ${file} ${field} must be boolean`);
     }
   }
-  if (data.color !== undefined && (
-    typeof data.color !== "string" ||
-    !/^#[0-9a-fA-F]{6}$/.test(data.color) &&
-    !["primary", "secondary", "accent", "success", "warning", "error", "info"].includes(data.color)
-  )) {
+  if (
+    data.color !== undefined &&
+    (typeof data.color !== "string" ||
+      (!/^#[0-9a-fA-F]{6}$/.test(data.color) &&
+        !["primary", "secondary", "accent", "success", "warning", "error", "info"].includes(data.color)))
+  ) {
     throw new Error(`[opencode-manager] Agent ${file} has invalid color`);
   }
-  if (data.tools !== undefined && (
-    !isObject(data.tools) || Object.values(data.tools).some((value) => typeof value !== "boolean")
-  )) {
+  if (
+    data.tools !== undefined &&
+    (!isObject(data.tools) || Object.values(data.tools).some((value) => typeof value !== "boolean"))
+  ) {
     throw new Error(`[opencode-manager] Agent ${file} tools must contain boolean values`);
   }
   if (data.options !== undefined && !isObject(data.options)) {
@@ -1548,9 +1594,11 @@ function validateAgentPermissions(file: string, value: unknown): void {
 async function registryFile(catalog: LoadedCatalog, entry: FileRegistryEntry, label: string): Promise<Buffer> {
   const catalogRoot = await realpath(catalog.root);
   const requested = resolve(catalogRoot, entry.path);
-  if (!isWithin(requested, catalogRoot)) throw new Error(`[opencode-manager] ${label} source escapes the registry root`);
+  if (!isWithin(requested, catalogRoot))
+    throw new Error(`[opencode-manager] ${label} source escapes the registry root`);
   const info = await lstat(requested);
-  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`[opencode-manager] ${label} source must be a regular file`);
+  if (info.isSymbolicLink() || !info.isFile())
+    throw new Error(`[opencode-manager] ${label} source must be a regular file`);
   const file = await realpath(requested);
   if (!isWithin(file, catalogRoot)) throw new Error(`[opencode-manager] ${label} source escapes the registry root`);
   if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] ${label} source is too large`);
@@ -1575,13 +1623,15 @@ async function agentBundle(catalog: LoadedCatalog, id: string, entry: AgentRegis
 
   const catalogRoot = await realpath(catalog.root);
   const requested = resolve(catalogRoot, entry.path);
-  if (!isWithin(requested, catalogRoot)) throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
+  if (!isWithin(requested, catalogRoot))
+    throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
   const info = await lstat(requested);
   if (info.isSymbolicLink() || !info.isDirectory()) {
     throw new Error(`[opencode-manager] Agent team "${id}" source must be a directory`);
   }
   const root = await realpath(requested);
-  if (!isWithin(root, catalogRoot)) throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
+  if (!isWithin(root, catalogRoot))
+    throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
   const entries = await collectTree(root, `Agent team "${id}"`);
   const files = entries.filter((item) => item.content !== undefined);
   if (files.length < 2) throw new Error(`[opencode-manager] Agent team "${id}" must contain at least two agents`);
@@ -1603,7 +1653,8 @@ async function copyEntries(entries: TreeEntry[], destination: string): Promise<v
   await mkdir(destination, { recursive: true });
   for (const entry of entries) {
     const target = join(destination, entry.path);
-    if (!isWithin(target, destination)) throw new Error(`[opencode-manager] Skill entry escapes destination: ${entry.path}`);
+    if (!isWithin(target, destination))
+      throw new Error(`[opencode-manager] Skill entry escapes destination: ${entry.path}`);
     if (entry.path.endsWith("/")) {
       await mkdir(target, { recursive: true, mode: entry.mode });
       await chmod(target, entry.mode);
@@ -1691,9 +1742,15 @@ export async function listSkills(options: ManagerOptions, sourceID: string): Pro
   const manifests = await Promise.all(
     directories.map(async (directory) => {
       const path = relative(root, directory).split(sep).join("/") || ".";
-      const manifest = parseSkillFrontmatter(join(directory, "SKILL.md"), await readFile(join(directory, "SKILL.md"), "utf8"));
+      const manifest = parseSkillFrontmatter(
+        join(directory, "SKILL.md"),
+        await readFile(join(directory, "SKILL.md"), "utf8"),
+      );
       const duplicate = names.get(manifest.name);
-      if (duplicate) throw new Error(`[opencode-manager] Skill source "${sourceID}" has duplicate name "${manifest.name}" at ${duplicate} and ${path}`);
+      if (duplicate)
+        throw new Error(
+          `[opencode-manager] Skill source "${sourceID}" has duplicate name "${manifest.name}" at ${duplicate} and ${path}`,
+        );
       names.set(manifest.name, path);
       return { directory, path, ...manifest };
     }),
@@ -1704,7 +1761,8 @@ export async function listSkills(options: ManagerOptions, sourceID: string): Pro
     const id = `${sourceID}:${manifest.path}`;
     const managed = state.skills[id];
     const destination = join(context.skillsDir, manifest.name);
-    if (!isWithin(destination, context.configDir)) throw new Error(`[opencode-manager] Invalid skill destination for "${manifest.name}"`);
+    if (!isWithin(destination, context.configDir))
+      throw new Error(`[opencode-manager] Invalid skill destination for "${manifest.name}"`);
     const current = await inspectTree(destination);
     let status: ResourceStatus = "absent";
     if (current.kind === "unsupported") status = "conflict";
@@ -1729,18 +1787,18 @@ export async function listSkills(options: ManagerOptions, sourceID: string): Pro
   return result.sort((a, b) => a.name.localeCompare(b.name));
 }
 
-async function skillArchivePath(context: ProjectContext, name: string, reason: "override" | "disabled"): Promise<string> {
+async function skillArchivePath(
+  context: ProjectContext,
+  name: string,
+  reason: "override" | "disabled",
+): Promise<string> {
   const backupRoot = await ensureContainedDirectory(context.backupDir, context.managerDir, "backup");
   const skillsRoot = await ensureContainedDirectory(join(backupRoot, "skills"), backupRoot, "skill backup");
   const directory = await ensureContainedDirectory(join(skillsRoot, reason), skillsRoot, `${reason} skill backup`);
   return join(directory, `${name}-${Date.now()}-${randomUUID()}`);
 }
 
-async function replaceSkillTree(
-  entries: TreeEntry[],
-  destination: string,
-  preservedPrevious?: string,
-): Promise<void> {
+async function replaceSkillTree(entries: TreeEntry[], destination: string, preservedPrevious?: string): Promise<void> {
   const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
   const previous = `${destination}.${process.pid}.${randomUUID()}.old`;
   await mkdir(dirname(destination), { recursive: true });
@@ -1803,11 +1861,19 @@ async function managedArchivePath(
 ): Promise<string> {
   const backupRoot = await ensureContainedDirectory(context.backupDir, context.managerDir, "backup");
   const resourceRoot = await ensureContainedDirectory(join(backupRoot, kind), backupRoot, `${kind} backup`);
-  const reasonRoot = await ensureContainedDirectory(join(resourceRoot, reason), resourceRoot, `${reason} ${kind} backup`);
+  const reasonRoot = await ensureContainedDirectory(
+    join(resourceRoot, reason),
+    resourceRoot,
+    `${reason} ${kind} backup`,
+  );
   return join(reasonRoot, `${id}-${Date.now()}-${randomUUID()}${directory ? "" : ".md"}`);
 }
 
-async function ensureProjectResourceDirectory(context: ProjectContext, directory: string, label: string): Promise<void> {
+async function ensureProjectResourceDirectory(
+  context: ProjectContext,
+  directory: string,
+  label: string,
+): Promise<void> {
   await mkdir(directory, { recursive: true });
   const canonical = await realpath(directory);
   if (canonical !== directory || !isWithin(canonical, context.configDir)) {
@@ -1849,20 +1915,24 @@ export async function setSkillEnabled(
         throw new Error(`[opencode-manager] Skill destination "${skill.name}" is a file or symlink`);
       }
       const currentDigest = current.kind === "directory" ? current.digest : undefined;
-      const conflict = owner !== undefined || (current.kind === "directory" && !managed) || (managed && currentDigest !== managed.digest);
+      const conflict =
+        owner !== undefined ||
+        (current.kind === "directory" && !managed) ||
+        (managed && currentDigest !== managed.digest);
       if (conflict && !mutation.override) {
         const reason = owner
           ? `is already managed by ${owner[0]}`
           : managed
             ? "was modified after manager installation"
             : "already exists and is unmanaged";
-        throw new Error(`[opencode-manager] Skill "${skill.name}" ${reason}; confirm override to preserve and replace it`);
+        throw new Error(
+          `[opencode-manager] Skill "${skill.name}" ${reason}; confirm override to preserve and replace it`,
+        );
       }
       const entries = await collectTree(sourceDirectory);
       const digest = digestEntries(entries);
-      const preserve = conflict && current.kind === "directory"
-        ? await skillArchivePath(context, skill.name, "override")
-        : undefined;
+      const preserve =
+        conflict && current.kind === "directory" ? await skillArchivePath(context, skill.name, "override") : undefined;
       if (currentDigest !== digest || owner) await replaceSkillTree(entries, destination, preserve);
       if (owner) delete state.skills[owner[0]];
       state.skills[id] = {
@@ -1913,9 +1983,7 @@ export async function setSkillSourceEnabled(
 ): Promise<SkillStatus[]> {
   const skills = await listSkills(options, sourceID);
   const conflict = skills.find((skill) =>
-    enabled
-      ? skill.status === "conflict" || skill.status === "modified"
-      : skill.status === "modified",
+    enabled ? skill.status === "conflict" || skill.status === "modified" : skill.status === "modified",
   );
   if (conflict && !mutation.override) {
     throw new Error(
@@ -1934,10 +2002,10 @@ export async function setSkillSourceEnabled(
   } catch (error) {
     if (applied === 0) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    throw Object.assign(
-      new Error(`[opencode-manager] Skill source "${sourceID}" was partially applied: ${message}`),
-      { partialApplied: true, cause: error },
-    );
+    throw Object.assign(new Error(`[opencode-manager] Skill source "${sourceID}" was partially applied: ${message}`), {
+      partialApplied: true,
+      cause: error,
+    });
   }
   return listSkills(options, sourceID);
 }
@@ -1996,9 +2064,13 @@ export async function listRules(options: ManagerOptions): Promise<RuleStatus[]> 
       const current = await inspectFile(destination);
       let status: ResourceStatus;
       if (managed) {
-        status = sourceValid && current.kind === "file" && current.digest === managed.digest && instructions.includes(ruleInstruction(id))
-          ? "managed"
-          : "modified";
+        status =
+          sourceValid &&
+          current.kind === "file" &&
+          current.digest === managed.digest &&
+          instructions.includes(ruleInstruction(id))
+            ? "managed"
+            : "modified";
       } else {
         status = current.kind === "absent" ? "absent" : "conflict";
       }
@@ -2046,16 +2118,18 @@ export async function setRuleEnabled(
       if (current.kind === "unsupported") {
         throw new Error(`[opencode-manager] Rule destination "${id}" is a directory or symlink`);
       }
-      const conflict = (current.kind === "file" && !managed) ||
+      const conflict =
+        (current.kind === "file" && !managed) ||
         (managed && (current.kind !== "file" || current.digest !== managed.digest || !instructionPresent));
       if (conflict && !mutation.override) {
         const reason = managed ? "was modified after manager installation" : "already exists and is unmanaged";
         throw new Error(`[opencode-manager] Rule "${id}" ${reason}; confirm override to preserve and replace it`);
       }
       await ensureProjectResourceDirectory(context, context.instructionsDir, "instructions");
-      const preserve = conflict && current.kind === "file"
-        ? await managedArchivePath(context, "rules", id, "override", false)
-        : undefined;
+      const preserve =
+        conflict && current.kind === "file"
+          ? await managedArchivePath(context, "rules", id, "override", false)
+          : undefined;
       if (conflict || current.kind !== "file" || current.digest !== digest) {
         await replaceManagedFile(content, destination, preserve);
       }
@@ -2084,7 +2158,9 @@ export async function setRuleEnabled(
       throw new Error(`[opencode-manager] Refusing to disable modified rule "${id}" without confirmation`);
     }
     if (!instructionPresent && !mutation.override) {
-      throw new Error(`[opencode-manager] Refusing to disable rule "${id}" after its instruction reference was modified`);
+      throw new Error(
+        `[opencode-manager] Refusing to disable rule "${id}" after its instruction reference was modified`,
+      );
     }
     if (current.kind === "file") {
       const archive = await managedArchivePath(context, "rules", id, "disabled", false);
@@ -2133,14 +2209,19 @@ export async function listAgents(options: ManagerOptions): Promise<AgentStatus[]
       }
       const installedType = managed?.type ?? entry.type;
       const destination = agentDestination(context, id, installedType);
-      const current = installedType === "single"
-        ? await inspectFile(destination)
-        : await inspectTree(destination, `Agent team "${id}"`);
+      const current =
+        installedType === "single"
+          ? await inspectFile(destination)
+          : await inspectTree(destination, `Agent team "${id}"`);
       const currentDigest = current.kind === "file" || current.kind === "directory" ? current.digest : undefined;
       const inherited = !managed && current.kind === "absent" && inheritedAgent(options, id, entry.type);
       const status: ResourceStatus = managed
-        ? sourceValid && managed.type === entry.type && currentDigest === managed.digest ? "managed" : "modified"
-        : current.kind !== "absent" || inherited ? "conflict" : "absent";
+        ? sourceValid && managed.type === entry.type && currentDigest === managed.digest
+          ? "managed"
+          : "modified"
+        : current.kind !== "absent" || inherited
+          ? "conflict"
+          : "absent";
       return {
         id,
         title: entry.title,
@@ -2176,13 +2257,15 @@ export async function setAgentEnabled(
     resultMembers = managed?.members ?? 1;
     const installedType = managed?.type ?? entry.type;
     const installedDestination = agentDestination(context, id, installedType);
-    const current = installedType === "single"
-      ? await inspectFile(installedDestination)
-      : await inspectTree(installedDestination, `Agent team "${id}"`);
+    const current =
+      installedType === "single"
+        ? await inspectFile(installedDestination)
+        : await inspectTree(installedDestination, `Agent team "${id}"`);
     const currentDigest = current.kind === "file" || current.kind === "directory" ? current.digest : undefined;
 
     if (enabled) {
-      if (!registryEntry) throw new Error(`[opencode-manager] Agent resource "${id}" is no longer available in the registry`);
+      if (!registryEntry)
+        throw new Error(`[opencode-manager] Agent resource "${id}" is no longer available in the registry`);
       const bundle = await agentBundle(catalog, id, registryEntry);
       resultMembers = bundle.members;
       const typeChanged = managed !== undefined && installedType !== registryEntry.type;
@@ -2200,22 +2283,29 @@ export async function setAgentEnabled(
       if (target.kind === "unsupported") {
         throw new Error(`[opencode-manager] Agent target "${id}" has the wrong type or is a symlink`);
       }
-      const conflict = typeChanged || inherited || (target.kind !== "absent" && !managed) ||
-        (managed && currentDigest !== managed.digest) || (typeChanged && target.kind !== "absent");
+      const conflict =
+        typeChanged ||
+        inherited ||
+        (target.kind !== "absent" && !managed) ||
+        (managed && currentDigest !== managed.digest) ||
+        (typeChanged && target.kind !== "absent");
       if (conflict && !mutation.override) {
         const reason = inherited
           ? "conflicts with an inherited same-name agent"
           : typeChanged
             ? `changed registry type from ${installedType} to ${registryEntry.type}`
-          : managed
-            ? "was modified after manager installation"
-            : "already exists and is unmanaged";
-        throw new Error(`[opencode-manager] Agent resource "${id}" ${reason}; confirm override to preserve and replace it`);
+            : managed
+              ? "was modified after manager installation"
+              : "already exists and is unmanaged";
+        throw new Error(
+          `[opencode-manager] Agent resource "${id}" ${reason}; confirm override to preserve and replace it`,
+        );
       }
       await ensureProjectResourceDirectory(context, context.agentsDir, "agents");
-      const preserve = (typeChanged ? target : current).kind !== "absent" && conflict
-        ? await managedArchivePath(context, "agents", id, "override", registryEntry.type === "team")
-        : undefined;
+      const preserve =
+        (typeChanged ? target : current).kind !== "absent" && conflict
+          ? await managedArchivePath(context, "agents", id, "override", registryEntry.type === "team")
+          : undefined;
       let migratedArchive: string | undefined;
       if (typeChanged && current.kind !== "absent") {
         migratedArchive = await managedArchivePath(context, "agents", id, "override", installedType === "team");
@@ -2237,8 +2327,10 @@ export async function setAgentEnabled(
 
     const inherited = !managed && current.kind === "absent" && inheritedAgent(options, id, entry.type);
     if (!managed) {
-      if (inherited) throw new Error(`[opencode-manager] Cannot disable inherited agent resource "${id}" project-locally`);
-      if (current.kind !== "absent") throw new Error(`[opencode-manager] Refusing to disable unmanaged agent resource "${id}"`);
+      if (inherited)
+        throw new Error(`[opencode-manager] Cannot disable inherited agent resource "${id}" project-locally`);
+      if (current.kind !== "absent")
+        throw new Error(`[opencode-manager] Refusing to disable unmanaged agent resource "${id}"`);
       return;
     }
     if (current.kind === "unsupported") {
@@ -2301,18 +2393,22 @@ async function profileSkillStates(
   context: ProjectContext,
   state: ManagerState,
 ): Promise<Map<string, "absent" | "managed" | "modified">> {
-  const ids = [...new Set(catalog.profiles.flatMap((profile) => profile.skills.map((item) => `${item.source}:${item.path}`)))];
+  const ids = [
+    ...new Set(catalog.profiles.flatMap((profile) => profile.skills.map((item) => `${item.source}:${item.path}`))),
+  ];
   const result = new Map<string, "absent" | "managed" | "modified">();
-  await Promise.all(ids.map(async (id) => {
-    const managed = own(state.skills, id);
-    if (!managed) {
-      result.set(id, "absent");
-      return;
-    }
-    const destination = join(context.skillsDir, managed.name);
-    const current = await inspectTree(destination);
-    result.set(id, current.kind === "directory" && current.digest === managed.digest ? "managed" : "modified");
-  }));
+  await Promise.all(
+    ids.map(async (id) => {
+      const managed = own(state.skills, id);
+      if (!managed) {
+        result.set(id, "absent");
+        return;
+      }
+      const destination = join(context.skillsDir, managed.name);
+      const current = await inspectTree(destination);
+      result.set(id, current.kind === "directory" && current.digest === managed.digest ? "managed" : "modified");
+    }),
+  );
   return result;
 }
 
@@ -2354,12 +2450,11 @@ export async function getProfile(options: ManagerOptions, profileID: string): Pr
   const refs = catalog.profiles.find((item) => item.id === profileID)!.skills;
   const sourceIDs = [...new Set(refs.map((item) => item.source))];
   const sourceSkills = new Map<string, SkillStatus[]>();
-  await Promise.all(
-    sourceIDs.map(async (sourceID) => sourceSkills.set(sourceID, await listSkills(options, sourceID))),
-  );
+  await Promise.all(sourceIDs.map(async (sourceID) => sourceSkills.set(sourceID, await listSkills(options, sourceID))));
   const skills = refs.map((ref) => {
     const skill = sourceSkills.get(ref.source)?.find((item) => item.path === ref.path);
-    if (!skill) throw new Error(`[opencode-manager] Profile "${profileID}" references missing skill "${ref.source}:${ref.path}"`);
+    if (!skill)
+      throw new Error(`[opencode-manager] Profile "${profileID}" references missing skill "${ref.source}:${ref.path}"`);
     return skill;
   });
   const hasConflict =
@@ -2387,25 +2482,33 @@ export async function setProfileEnabled(
     enabled ? item.status === "conflict" : item.status === "conflict" && item.ownership === "manager",
   );
   if (mcpConflict && !mutation.override) {
-    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting MCP "${mcpConflict.id}"; confirm override to continue`);
+    throw new Error(
+      `[opencode-manager] Profile "${profileID}" has conflicting MCP "${mcpConflict.id}"; confirm override to continue`,
+    );
   }
   const skillConflict = detail.skills.find((item) =>
     enabled ? item.status === "conflict" || item.status === "modified" : item.status === "modified",
   );
   if (skillConflict && !mutation.override) {
-    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting skill "${skillConflict.name}"; confirm override to continue`);
+    throw new Error(
+      `[opencode-manager] Profile "${profileID}" has conflicting skill "${skillConflict.name}"; confirm override to continue`,
+    );
   }
   const ruleConflict = detail.rules.find((item) =>
     enabled ? item.status === "conflict" || item.status === "modified" : item.status === "modified",
   );
   if (ruleConflict && !mutation.override) {
-    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting rule "${ruleConflict.id}"; confirm override to continue`);
+    throw new Error(
+      `[opencode-manager] Profile "${profileID}" has conflicting rule "${ruleConflict.id}"; confirm override to continue`,
+    );
   }
   const agentConflict = detail.agents.find((item) =>
     enabled ? item.status === "conflict" || item.status === "modified" : item.status === "modified",
   );
   if (agentConflict && !mutation.override) {
-    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting agent resource "${agentConflict.id}"; confirm override to continue`);
+    throw new Error(
+      `[opencode-manager] Profile "${profileID}" has conflicting agent resource "${agentConflict.id}"; confirm override to continue`,
+    );
   }
 
   let applied = 0;
@@ -2434,10 +2537,10 @@ export async function setProfileEnabled(
   } catch (error) {
     if (applied === 0) throw error;
     const message = error instanceof Error ? error.message : String(error);
-    throw Object.assign(
-      new Error(`[opencode-manager] Profile "${profileID}" was partially applied: ${message}`),
-      { partialApplied: true, cause: error },
-    );
+    throw Object.assign(new Error(`[opencode-manager] Profile "${profileID}" was partially applied: ${message}`), {
+      partialApplied: true,
+      cause: error,
+    });
   }
   return getProfile(options, profileID);
 }

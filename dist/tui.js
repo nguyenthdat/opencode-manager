@@ -346,7 +346,7 @@ async function showAgents(state) {
                 value: { type: "agent", agent, parent },
                 description: `${agent.description} [${agent.id}]`,
                 footer: agentFooter(agent),
-                category: agent.type === "team" ? "Agent Teams" : agent.tags[0] ?? "Agents",
+                category: agent.type === "team" ? "Agent Teams" : (agent.tags[0] ?? "Agents"),
             })),
         ];
         replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
@@ -387,13 +387,15 @@ async function showSource(state, sourceID) {
         const rows = [
             navigation("Back to manager"),
             ...(skills.length > 1
-                ? [{
+                ? [
+                    {
                         title: `All skills (${skills.length})`,
                         value: { type: "skill-source", source, skills, parent },
                         description: "Install every skill from this source, or remove every manager-owned install",
                         footer: `${installed}/${skills.length} installed`,
                         category: "Bulk Actions",
-                    }]
+                    },
+                ]
                 : []),
             ...skills.map((skill) => ({
                 title: skill.name,
@@ -437,8 +439,8 @@ function selectionEnabled(selection) {
     if (selection.type === "plugin")
         return selection.plugin.enabled;
     if (selection.type === "skill-source") {
-        return selection.skills.length > 0
-            && selection.skills.every((skill) => skill.status === "managed" || skill.status === "modified");
+        return (selection.skills.length > 0 &&
+            selection.skills.every((skill) => skill.status === "managed" || skill.status === "modified"));
     }
     if (selection.type === "skill")
         return selection.skill.status === "managed" || selection.skill.status === "modified";
@@ -483,9 +485,7 @@ function selectionConflict(selection, enabled) {
     if (selection.type === "plugin")
         return selection.plugin.status === "conflict";
     if (selection.type === "skill-source") {
-        return selection.skills.some((skill) => enabled
-            ? skill.status === "conflict" || skill.status === "modified"
-            : skill.status === "modified");
+        return selection.skills.some((skill) => enabled ? skill.status === "conflict" || skill.status === "modified" : skill.status === "modified");
     }
     if (selection.type === "skill")
         return selection.skill.status === "conflict" || selection.skill.status === "modified";

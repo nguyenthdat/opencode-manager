@@ -206,9 +206,9 @@ describe("registry", () => {
       expect(source).toMatchObject({ type: "git", ...expected });
       expect(source?.type === "git" ? source.revision : "").toMatch(/^[a-f0-9]{40}$/);
     }
-    expect(catalog.skillSources["pm-skills"]?.type === "git"
-      ? catalog.skillSources["pm-skills"].repository
-      : "").toBe("https://github.com/phuryn/pm-skills.git");
+    expect(catalog.skillSources["pm-skills"]?.type === "git" ? catalog.skillSources["pm-skills"].repository : "").toBe(
+      "https://github.com/phuryn/pm-skills.git",
+    );
     expect(catalog.profiles.some((profile) => profile.id === "qdrant")).toBe(true);
     expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
     expect(catalog.agents["review-team"]?.type).toBe("team");
@@ -344,10 +344,7 @@ describe("registry", () => {
     await writeFile(join(configDir, "instructions", "fixture-rule.md"), rule);
     await writeFile(join(configDir, "agents", "fixture-agent.md"), agent);
     await writeFile(join(configDir, "agents", "fixture-agent", "member.md"), "unrelated nested agent\n");
-    await writeFile(
-      join(configDir, "opencode.jsonc"),
-      `{"share":"disabled"}\n`,
-    );
+    await writeFile(join(configDir, "opencode.jsonc"), `{"share":"disabled"}\n`);
     await writeFile(
       join(value.projectRoot, "opencode.jsonc"),
       `{"instructions":[".opencode/instructions/fixture-rule.md"]}\n`,
@@ -444,11 +441,14 @@ describe("project MCP registry", () => {
   test("uses an enabled-only override for an exact inherited MCP", async () => {
     const value = await fixture();
     const catalog = await loadCatalog({ catalogPath: value.catalogPath });
-    const inherited = new Proxy({
-      ...catalog.mcps.docs?.config,
-      headers: new Proxy({ Authorization: "Bearer resolved-secret\nsecond-line" }, {}),
-      enabled: false,
-    }, {});
+    const inherited = new Proxy(
+      {
+        ...catalog.mcps.docs?.config,
+        headers: new Proxy({ Authorization: "Bearer resolved-secret\nsecond-line" }, {}),
+        enabled: false,
+      },
+      {},
+    );
     const options = { ...value.options, effectiveMcp: { docs: inherited } };
     await setMcpEnabled(options, "docs", true);
     const config = parse(await readFile(join(value.projectRoot, ".opencode", "opencode.jsonc"), "utf8"));
@@ -478,10 +478,7 @@ describe("project MCP registry", () => {
     const outside = join(value.root, "outside-backups");
     await Promise.all([mkdir(managerDir, { recursive: true }), mkdir(outside)]);
     await symlink(outside, join(managerDir, "backups"));
-    await writeFile(
-      join(configDir, "opencode.jsonc"),
-      `{"mcp":{"docs":{"type":"local","command":["unexpected"]}}}\n`,
-    );
+    await writeFile(join(configDir, "opencode.jsonc"), `{"mcp":{"docs":{"type":"local","command":["unexpected"]}}}\n`);
 
     await expect(setMcpEnabled(value.options, "docs", true, { override: true })).rejects.toThrow(
       "backup directory changed or escapes",
@@ -546,7 +543,9 @@ describe("project plugin registry", () => {
     );
 
     expect((await listPlugins(value.options))[0]?.status).toBe("conflict");
-    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow("conflicts with the registry package");
+    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow(
+      "conflicts with the registry package",
+    );
     const enabled = await setPluginEnabled(value.options, "fixture", true, { override: true });
     expect(enabled).toMatchObject({ status: "enabled", ownership: "manager" });
     const config = parse(await readFile(join(configDir, "opencode.jsonc"), "utf8"));
@@ -563,7 +562,9 @@ describe("project plugin registry", () => {
     await writeFile(value.catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
 
     expect((await listPlugins(value.options))[0]).toMatchObject({ enabled: true, status: "conflict" });
-    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow("modified after manager installation");
+    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow(
+      "modified after manager installation",
+    );
     const updated = await setPluginEnabled(value.options, "fixture", true, { override: true });
     expect(updated).toMatchObject({ enabled: true, status: "enabled", ownership: "manager" });
     const config = parse(await readFile(join(value.projectRoot, ".opencode", "opencode.jsonc"), "utf8"));
@@ -612,9 +613,7 @@ describe("project skill registry", () => {
     const destination = join(value.projectRoot, ".opencode", "skills", "fixture-skill");
     await mkdir(destination, { recursive: true });
     await writeFile(join(destination, "SKILL.md"), "user-owned skill\n");
-    await expect(setSkillEnabled(value.options, "custom", "fixture-skill", true)).rejects.toThrow(
-      "confirm override",
-    );
+    await expect(setSkillEnabled(value.options, "custom", "fixture-skill", true)).rejects.toThrow("confirm override");
 
     await setSkillEnabled(value.options, "custom", "fixture-skill", true, { override: true });
     expect(await readFile(join(destination, "reference.txt"), "utf8")).toBe("registry asset\n");
@@ -736,7 +735,9 @@ describe("project rule registry", () => {
       `${JSON.stringify({ instructions: ["docs/project.md"], share: "manual" }, null, 2)}\n`,
     );
     expect((await listRules(value.options))[0]?.status).toBe("modified");
-    await expect(setRuleEnabled(value.options, "fixture-rule", false)).rejects.toThrow("instruction reference was modified");
+    await expect(setRuleEnabled(value.options, "fixture-rule", false)).rejects.toThrow(
+      "instruction reference was modified",
+    );
     await setRuleEnabled(value.options, "fixture-rule", true, { override: true });
 
     await writeFile(ruleFile, "project-modified rule\n");
@@ -826,8 +827,16 @@ describe("project agent registry", () => {
   test("installs standalone agents and complete folder-based teams", async () => {
     const value = await fixture();
     const before = await listAgents(value.options);
-    expect(before.find((agent) => agent.id === "fixture-agent")).toMatchObject({ type: "single", members: 1, status: "absent" });
-    expect(before.find((agent) => agent.id === "fixture-team")).toMatchObject({ type: "team", members: 2, status: "absent" });
+    expect(before.find((agent) => agent.id === "fixture-agent")).toMatchObject({
+      type: "single",
+      members: 1,
+      status: "absent",
+    });
+    expect(before.find((agent) => agent.id === "fixture-team")).toMatchObject({
+      type: "team",
+      members: 2,
+      status: "absent",
+    });
 
     await setAgentEnabled(value.options, "fixture-agent", true);
     const team = await setAgentEnabled(value.options, "fixture-team", true);
@@ -841,7 +850,9 @@ describe("project agent registry", () => {
     await expect(setAgentEnabled(value.options, "fixture-team", false)).rejects.toThrow("modified agent resource");
     await setAgentEnabled(value.options, "fixture-team", false, { override: true });
     expect(await exists(join(agentsDir, "fixture-team"))).toBe(false);
-    const backups = await readdir(join(value.projectRoot, ".opencode", ".opencode-manager", "backups", "agents", "disabled"));
+    const backups = await readdir(
+      join(value.projectRoot, ".opencode", ".opencode-manager", "backups", "agents", "disabled"),
+    );
     expect(backups).toHaveLength(1);
   });
 
@@ -905,10 +916,7 @@ describe("project agent registry", () => {
   test("rejects malformed known agent frontmatter fields", async () => {
     const value = await fixture();
     const file = join(value.registry, "agents", "fixture-agent.md");
-    await writeFile(
-      file,
-      `---\ndescription: Invalid steps fixture.\nmode: subagent\nsteps: many\n---\n\n# Invalid\n`,
-    );
+    await writeFile(file, `---\ndescription: Invalid steps fixture.\nmode: subagent\nsteps: many\n---\n\n# Invalid\n`);
     await expect(listAgents(value.options)).rejects.toThrow("steps must be a positive integer");
   });
 
@@ -977,10 +985,7 @@ describe("profiles", () => {
   test("reports modified rules and teams as profile conflicts", async () => {
     const value = await fixture();
     await setProfileEnabled(value.options, "fixture", true);
-    await writeFile(
-      join(value.projectRoot, ".opencode", "agents", "fixture-team", "reviewer.md"),
-      "project edit\n",
-    );
+    await writeFile(join(value.projectRoot, ".opencode", "agents", "fixture-team", "reviewer.md"), "project edit\n");
     const profile = (await listProfiles(value.options))[0];
     expect(profile?.status).toBe("conflict");
     expect(profile?.enabledResources).toBe(4);
@@ -989,10 +994,7 @@ describe("profiles", () => {
   test("reports a modified managed skill as a profile conflict", async () => {
     const value = await fixture();
     await setProfileEnabled(value.options, "fixture", true);
-    await writeFile(
-      join(value.projectRoot, ".opencode", "skills", "fixture-skill", "reference.txt"),
-      "project edit\n",
-    );
+    await writeFile(join(value.projectRoot, ".opencode", "skills", "fixture-skill", "reference.txt"), "project edit\n");
     const profile = (await listProfiles(value.options))[0];
     expect(profile?.status).toBe("conflict");
     expect(profile?.enabledResources).toBe(4);

@@ -43,9 +43,18 @@
   "main": "./dist/manager.js",
   "types": "./dist/manager.d.ts",
   "exports": {
-    ".": { "types": "./dist/manager.d.ts", "import": "./dist/manager.js" },
-    "./manager": { "types": "./dist/manager.d.ts", "import": "./dist/manager.js" },
-    "./tui": { "types": "./dist/tui.d.ts", "import": "./dist/tui.js" }
+    ".": {
+      "types": "./dist/manager.d.ts",
+      "import": "./dist/manager.js"
+    },
+    "./manager": {
+      "types": "./dist/manager.d.ts",
+      "import": "./dist/manager.js"
+    },
+    "./tui": {
+      "types": "./dist/tui.d.ts",
+      "import": "./dist/tui.js"
+    }
   },
   "files": [
     "dist/",
@@ -59,6 +68,10 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "format": "prettier --write \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\" \"*.json\" \".github/**/*.{yml,yaml}\" \"registry/catalog.jsonc\" \"README.md\" \"docs/**/*.md\"",
+    "format:check": "prettier --check \"src/**/*.ts\" \"scripts/**/*.ts\" \"test/**/*.ts\" \"*.json\" \".github/**/*.{yml,yaml}\" \"registry/catalog.jsonc\" \"README.md\" \"docs/**/*.md\"",
+    "format:staged": "lint-staged",
+    "prepare": "bun scripts/setup-git-hooks.ts",
     "registry:update": "bun scripts/update-skill-source-revisions.ts",
     "registry:update:check": "bun scripts/update-skill-source-revisions.ts --check",
     "registry:validate": "bun scripts/validate-skill-sources.ts",
@@ -73,7 +86,9 @@
     "@opencode-ai/plugin": ">=1.18.4"
   },
   "peerDependenciesMeta": {
-    "@opencode-ai/plugin": { "optional": true }
+    "@opencode-ai/plugin": {
+      "optional": true
+    }
   },
   "publishConfig": {
     "access": "public"
@@ -87,6 +102,19 @@
     "@opentui/keymap": "^0.4.5",
     "@opentui/solid": "^0.4.5",
     "@types/bun": "latest",
+    "lint-staged": "^17.2.0",
+    "prettier": "3.8.3",
+    "simple-git-hooks": "^2.13.1",
     "typescript": "^5.9.2"
+  },
+  "simple-git-hooks": {
+    "pre-commit": "bun run format:staged"
+  },
+  "lint-staged": {
+    "{src,scripts,test}/**/*.{ts,tsx,js,jsx,mjs,cjs}": "prettier --write",
+    "*.json": "prettier --write",
+    ".github/**/*.{yml,yaml}": "prettier --write",
+    "registry/catalog.jsonc": "prettier --write",
+    "{README.md,docs/**/*.md}": "prettier --write"
   }
 }

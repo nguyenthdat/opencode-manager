@@ -408,7 +408,7 @@ async function showAgents(state: State): Promise<void> {
         value: { type: "agent", agent, parent } satisfies DialogValue,
         description: `${agent.description} [${agent.id}]`,
         footer: agentFooter(agent),
-        category: agent.type === "team" ? "Agent Teams" : agent.tags[0] ?? "Agents",
+        category: agent.type === "team" ? "Agent Teams" : (agent.tags[0] ?? "Agents"),
       })),
     ];
     replaceDialog(state, undefined, () =>
@@ -448,13 +448,15 @@ async function showSource(state: State, sourceID: string): Promise<void> {
     const rows: TuiDialogSelectOption<DialogValue>[] = [
       navigation("Back to manager"),
       ...(skills.length > 1
-        ? [{
-            title: `All skills (${skills.length})`,
-            value: { type: "skill-source", source, skills, parent } satisfies DialogValue,
-            description: "Install every skill from this source, or remove every manager-owned install",
-            footer: `${installed}/${skills.length} installed`,
-            category: "Bulk Actions",
-          }]
+        ? [
+            {
+              title: `All skills (${skills.length})`,
+              value: { type: "skill-source", source, skills, parent } satisfies DialogValue,
+              description: "Install every skill from this source, or remove every manager-owned install",
+              footer: `${installed}/${skills.length} installed`,
+              category: "Bulk Actions",
+            },
+          ]
         : []),
       ...skills.map((skill) => ({
         title: skill.name,
@@ -495,8 +497,10 @@ function selectionEnabled(selection: Selection): boolean {
   if (selection.type === "mcp") return selection.mcp.enabled;
   if (selection.type === "plugin") return selection.plugin.enabled;
   if (selection.type === "skill-source") {
-    return selection.skills.length > 0
-      && selection.skills.every((skill) => skill.status === "managed" || skill.status === "modified");
+    return (
+      selection.skills.length > 0 &&
+      selection.skills.every((skill) => skill.status === "managed" || skill.status === "modified")
+    );
   }
   if (selection.type === "skill") return selection.skill.status === "managed" || selection.skill.status === "modified";
   if (selection.type === "rule") return selection.rule.status === "managed" || selection.rule.status === "modified";
@@ -530,9 +534,7 @@ function selectionConflict(selection: Selection, enabled: boolean): boolean {
   if (selection.type === "plugin") return selection.plugin.status === "conflict";
   if (selection.type === "skill-source") {
     return selection.skills.some((skill) =>
-      enabled
-        ? skill.status === "conflict" || skill.status === "modified"
-        : skill.status === "modified",
+      enabled ? skill.status === "conflict" || skill.status === "modified" : skill.status === "modified",
     );
   }
   if (selection.type === "skill") return selection.skill.status === "conflict" || selection.skill.status === "modified";
@@ -543,30 +545,31 @@ function selectionConflict(selection: Selection, enabled: boolean): boolean {
 function confirmToggle(state: State, selection: Selection, forcedEnabled?: boolean): void {
   const enabled = forcedEnabled ?? !selectionEnabled(selection);
   const label = selectionLabel(selection);
-  const scope = selection.type === "profile"
-    ? "Every registry resource in this profile"
-    : selection.type === "skill-source"
-      ? `Every skill in this source (${selection.skills.length})`
-      : "This resource";
+  const scope =
+    selection.type === "profile"
+      ? "Every registry resource in this profile"
+      : selection.type === "skill-source"
+        ? `Every skill in this source (${selection.skills.length})`
+        : "This resource";
   const hasConflict = selectionConflict(selection, enabled);
   const conflict =
     selection.type === "mcp" && selection.mcp.status === "conflict"
       ? "\n\nThis MCP conflicts with an existing definition and the operation will be refused."
       : selection.type === "plugin" && selection.plugin.status === "conflict"
         ? "\n\nThis plugin has a different version or options; an approved replacement or removal is backed up first."
-      : selection.type === "plugin" && selection.plugin.ownership === "inherited" && !enabled
-        ? "\n\nInherited plugins cannot be disabled project-locally; remove it from the parent or global config."
-      : selection.type === "skill-source" && hasConflict
-        ? "\n\nOne or more skills conflict with or were modified in the project; approved replacements or removals are archived first."
-      : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
-        ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
-        : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
-          ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
-          : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
-            ? selection.agent.ownership === "inherited"
-              ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
-              : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
-        : "";
+        : selection.type === "plugin" && selection.plugin.ownership === "inherited" && !enabled
+          ? "\n\nInherited plugins cannot be disabled project-locally; remove it from the parent or global config."
+          : selection.type === "skill-source" && hasConflict
+            ? "\n\nOne or more skills conflict with or were modified in the project; approved replacements or removals are archived first."
+            : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
+              ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
+              : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
+                ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
+                : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
+                  ? selection.agent.ownership === "inherited"
+                    ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
+                    : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
+                  : "";
   const busy = activeSessionBusy(state.api)
     ? "\n\nThe active session is busy and may be interrupted when OpenCode reloads."
     : "";

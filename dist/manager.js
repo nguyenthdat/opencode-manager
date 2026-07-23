@@ -69,9 +69,7 @@ function parseJsonc(file, source) {
     const errors = [];
     const root = parseTree(source, errors, { allowTrailingComma: true, disallowComments: false });
     if (errors.length > 0) {
-        const details = errors
-            .map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`)
-            .join(", ");
+        const details = errors.map((error) => `${printParseErrorCode(error.error)} at offset ${error.offset}`).join(", ");
         throw new Error(`[opencode-manager] Invalid JSONC in ${file}: ${details}`);
     }
     if (!root || root.type !== "object")
@@ -104,7 +102,9 @@ function validateMcpConfig(id, input) {
             throw new Error(`[opencode-manager] MCP "${id}" has unsupported field "${key}"`);
     }
     if (type === "local") {
-        if (!Array.isArray(input.command) || input.command.length === 0 || input.command.some((item) => typeof item !== "string")) {
+        if (!Array.isArray(input.command) ||
+            input.command.length === 0 ||
+            input.command.some((item) => typeof item !== "string")) {
             throw new Error(`[opencode-manager] MCP "${id}" command must be a non-empty string array`);
         }
     }
@@ -412,9 +412,7 @@ async function readState(context) {
             throw new Error(`[opencode-manager] Invalid managed rule state "${id}"`);
         rules[id] = {
             title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
-            description: typeof raw.description === "string" && raw.description.trim()
-                ? raw.description
-                : `Managed rule ${id}`,
+            description: typeof raw.description === "string" && raw.description.trim() ? raw.description : `Managed rule ${id}`,
             tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed rule "${id}" tags`),
             path: raw.path === undefined ? `rules/${id}.md` : safeRelativePath(raw.path, `managed rule "${id}" path`),
             digest: text(raw.digest, `managed rule "${id}" digest`),
@@ -459,9 +457,7 @@ async function readState(context) {
         agents[id] = {
             type,
             title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
-            description: typeof raw.description === "string" && raw.description.trim()
-                ? raw.description
-                : `Managed agent ${id}`,
+            description: typeof raw.description === "string" && raw.description.trim() ? raw.description : `Managed agent ${id}`,
             tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed agent "${id}" tags`),
             path: raw.path === undefined
                 ? `agents/${id}${type === "single" ? ".md" : ""}`
@@ -615,7 +611,7 @@ async function resolveRuleConfigFile(context, path, label) {
     }
     try {
         const info = await lstat(file);
-        if (info.isSymbolicLink() || !info.isFile() || await realpath(file) !== file) {
+        if (info.isSymbolicLink() || !info.isFile() || (await realpath(file)) !== file) {
             throw new Error(`[opencode-manager] ${label} changed or is not a regular project config`);
         }
     }
@@ -699,17 +695,21 @@ function registryValueMatches(expected, actual) {
         return referencePattern(expected)?.test(actual) ?? expected === actual;
     }
     if (Array.isArray(expected)) {
-        return Array.isArray(actual) &&
+        return (Array.isArray(actual) &&
             expected.length === actual.length &&
-            expected.every((item, index) => registryValueMatches(item, actual[index]));
+            expected.every((item, index) => registryValueMatches(item, actual[index])));
     }
     if (isObject(expected)) {
         if (!isObject(actual))
             return false;
-        const expectedKeys = Object.keys(expected).filter((key) => key !== "enabled").sort();
-        const actualKeys = Object.keys(actual).filter((key) => key !== "enabled").sort();
-        return expectedKeys.length === actualKeys.length &&
-            expectedKeys.every((key, index) => key === actualKeys[index] && registryValueMatches(expected[key], actual[key]));
+        const expectedKeys = Object.keys(expected)
+            .filter((key) => key !== "enabled")
+            .sort();
+        const actualKeys = Object.keys(actual)
+            .filter((key) => key !== "enabled")
+            .sort();
+        return (expectedKeys.length === actualKeys.length &&
+            expectedKeys.every((key, index) => key === actualKeys[index] && registryValueMatches(expected[key], actual[key])));
     }
     return Object.is(expected, actual);
 }
@@ -723,7 +723,13 @@ function classifyMcp(entry, raw, inherited, managed) {
         : isObject(inherited) && typeof inherited.enabled === "boolean"
             ? inherited.enabled
             : entry.config.enabled === true;
-    const ownership = managed ? "manager" : raw !== undefined ? "project" : inherited !== undefined ? "inherited" : "absent";
+    const ownership = managed
+        ? "manager"
+        : raw !== undefined
+            ? "project"
+            : inherited !== undefined
+                ? "inherited"
+                : "absent";
     if (candidate && !matchesMcpRegistry(entry, candidate)) {
         return { enabled, status: "conflict", ownership };
     }
@@ -732,7 +738,11 @@ function classifyMcp(entry, raw, inherited, managed) {
     }
     if (!candidate && raw !== undefined)
         return { enabled, status: "conflict", ownership };
-    return { enabled, status: enabled ? "enabled" : raw === undefined && inherited === undefined ? "absent" : "disabled", ownership };
+    return {
+        enabled,
+        status: enabled ? "enabled" : raw === undefined && inherited === undefined ? "absent" : "disabled",
+        ownership,
+    };
 }
 export async function listMcps(options) {
     const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
@@ -790,7 +800,9 @@ export async function setMcpEnabled(options, id, enabled, mutation = {}) {
                 state.mcps[id] = { appliedHash: expectedHash };
             }
             else {
-                nextSource = applyEdits(config.source, modify(config.source, ["mcp", id, "enabled"], enabled, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+                nextSource = applyEdits(config.source, modify(config.source, ["mcp", id, "enabled"], enabled, {
+                    formattingOptions: { insertSpaces: true, tabSize: 2 },
+                }));
             }
         }
         else if (mcpDefinition(inherited)) {
@@ -803,7 +815,9 @@ export async function setMcpEnabled(options, id, enabled, mutation = {}) {
                 state.mcps[id] = { appliedHash: expectedHash };
             }
             else {
-                nextSource = applyEdits(config.source, modify(config.source, ["mcp", id, "enabled"], enabled, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+                nextSource = applyEdits(config.source, modify(config.source, ["mcp", id, "enabled"], enabled, {
+                    formattingOptions: { insertSpaces: true, tabSize: 2 },
+                }));
             }
         }
         else {
@@ -829,11 +843,11 @@ export async function setMcpEnabled(options, id, enabled, mutation = {}) {
 function pluginSpecifier(value) {
     if (typeof value === "string" && value.trim() !== "")
         return value;
-    if (Array.isArray(value)
-        && value.length === 2
-        && typeof value[0] === "string"
-        && value[0].trim() !== ""
-        && isObject(value[1])) {
+    if (Array.isArray(value) &&
+        value.length === 2 &&
+        typeof value[0] === "string" &&
+        value[0].trim() !== "" &&
+        isObject(value[1])) {
         return value[0];
     }
     return undefined;
@@ -862,9 +876,7 @@ function matchingPluginIndices(values, packageName) {
     return indices;
 }
 function managedPluginIndices(values, packageName, managed) {
-    const packageNames = managed && managed.package !== packageName
-        ? [packageName, managed.package]
-        : [packageName];
+    const packageNames = managed && managed.package !== packageName ? [packageName, managed.package] : [packageName];
     return values.flatMap((value, index) => packageNames.some((candidate) => matchesPluginPackage(value, candidate)) ? [index] : []);
 }
 function effectivePluginMatches(options, packageName) {
@@ -886,12 +898,13 @@ export async function listPlugins(options) {
                 : inheritedMatches.length > 0
                     ? "inherited"
                     : "absent";
-        const conflict = rawMatches.length > 1
-            || inheritedMatches.length > 1
-            || (candidate !== undefined && !exactPluginPackage(candidate, entry.package))
-            || (managed !== undefined && (managed.package !== entry.package
-                || rawMatches.length !== 1
-                || !exactPluginPackage(rawMatches[0], entry.package)));
+        const conflict = rawMatches.length > 1 ||
+            inheritedMatches.length > 1 ||
+            (candidate !== undefined && !exactPluginPackage(candidate, entry.package)) ||
+            (managed !== undefined &&
+                (managed.package !== entry.package ||
+                    rawMatches.length !== 1 ||
+                    !exactPluginPackage(rawMatches[0], entry.package)));
         return {
             id,
             ...entry,
@@ -1070,7 +1083,14 @@ async function ensureGitSource(context, id, source) {
     const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
     const previous = `${target}.${process.pid}.${randomUUID()}.old`;
     try {
-        await runGit(["clone", "--filter=blob:none", "--no-checkout", "--no-recurse-submodules", source.repository, temporary]);
+        await runGit([
+            "clone",
+            "--filter=blob:none",
+            "--no-checkout",
+            "--no-recurse-submodules",
+            source.repository,
+            temporary,
+        ]);
         await runGit(["-C", temporary, "fetch", "--depth", "1", "origin", source.revision]);
         await runGit(["-C", temporary, "checkout", "--detach", "FETCH_HEAD"]);
         const head = await runGit(["-C", temporary, "rev-parse", "HEAD"]);
@@ -1114,9 +1134,7 @@ async function skillSourceRoot(catalog, context, id) {
     const source = catalog.skillSources[id];
     if (!source)
         throw new Error(`[opencode-manager] Unknown skill source "${id}"`);
-    const root = source.type === "local"
-        ? resolve(catalog.root, source.path)
-        : await ensureGitSource(context, id, source);
+    const root = source.type === "local" ? resolve(catalog.root, source.path) : await ensureGitSource(context, id, source);
     const canonicalRoot = await realpath(root);
     if (source.type === "local") {
         const canonicalCatalogRoot = await realpath(catalog.root);
@@ -1215,7 +1233,13 @@ function parseMarkdownFrontmatter(file, source) {
     const data = parseYaml(lines.slice(1, end).join("\n"));
     if (!isObject(data))
         throw new Error(`[opencode-manager] Agent ${file} frontmatter must be an object`);
-    return { data, content: lines.slice(end + 1).join("\n").trim() };
+    return {
+        data,
+        content: lines
+            .slice(end + 1)
+            .join("\n")
+            .trim(),
+    };
 }
 function validateAgentDocument(file, source, expectedName) {
     const { data, content } = parseMarkdownFrontmatter(file, source);
@@ -1246,12 +1270,14 @@ function validateAgentDocument(file, source, expectedName) {
             throw new Error(`[opencode-manager] Agent ${file} ${field} must be boolean`);
         }
     }
-    if (data.color !== undefined && (typeof data.color !== "string" ||
-        !/^#[0-9a-fA-F]{6}$/.test(data.color) &&
-            !["primary", "secondary", "accent", "success", "warning", "error", "info"].includes(data.color))) {
+    if (data.color !== undefined &&
+        (typeof data.color !== "string" ||
+            (!/^#[0-9a-fA-F]{6}$/.test(data.color) &&
+                !["primary", "secondary", "accent", "success", "warning", "error", "info"].includes(data.color)))) {
         throw new Error(`[opencode-manager] Agent ${file} has invalid color`);
     }
-    if (data.tools !== undefined && (!isObject(data.tools) || Object.values(data.tools).some((value) => typeof value !== "boolean"))) {
+    if (data.tools !== undefined &&
+        (!isObject(data.tools) || Object.values(data.tools).some((value) => typeof value !== "boolean"))) {
         throw new Error(`[opencode-manager] Agent ${file} tools must contain boolean values`);
     }
     if (data.options !== undefined && !isObject(data.options)) {
@@ -1579,7 +1605,9 @@ export async function setSkillEnabled(options, sourceID, skillPath, enabled, mut
                 throw new Error(`[opencode-manager] Skill destination "${skill.name}" is a file or symlink`);
             }
             const currentDigest = current.kind === "directory" ? current.digest : undefined;
-            const conflict = owner !== undefined || (current.kind === "directory" && !managed) || (managed && currentDigest !== managed.digest);
+            const conflict = owner !== undefined ||
+                (current.kind === "directory" && !managed) ||
+                (managed && currentDigest !== managed.digest);
             if (conflict && !mutation.override) {
                 const reason = owner
                     ? `is already managed by ${owner[0]}`
@@ -1590,9 +1618,7 @@ export async function setSkillEnabled(options, sourceID, skillPath, enabled, mut
             }
             const entries = await collectTree(sourceDirectory);
             const digest = digestEntries(entries);
-            const preserve = conflict && current.kind === "directory"
-                ? await skillArchivePath(context, skill.name, "override")
-                : undefined;
+            const preserve = conflict && current.kind === "directory" ? await skillArchivePath(context, skill.name, "override") : undefined;
             if (currentDigest !== digest || owner)
                 await replaceSkillTree(entries, destination, preserve);
             if (owner)
@@ -1638,9 +1664,7 @@ export async function setSkillEnabled(options, sourceID, skillPath, enabled, mut
 }
 export async function setSkillSourceEnabled(options, sourceID, enabled, mutation = {}) {
     const skills = await listSkills(options, sourceID);
-    const conflict = skills.find((skill) => enabled
-        ? skill.status === "conflict" || skill.status === "modified"
-        : skill.status === "modified");
+    const conflict = skills.find((skill) => enabled ? skill.status === "conflict" || skill.status === "modified" : skill.status === "modified");
     if (conflict && !mutation.override) {
         throw new Error(`[opencode-manager] Skill source "${sourceID}" has conflicting skill "${conflict.name}"; confirm override to continue`);
     }
@@ -1659,7 +1683,10 @@ export async function setSkillSourceEnabled(options, sourceID, enabled, mutation
         if (applied === 0)
             throw error;
         const message = error instanceof Error ? error.message : String(error);
-        throw Object.assign(new Error(`[opencode-manager] Skill source "${sourceID}" was partially applied: ${message}`), { partialApplied: true, cause: error });
+        throw Object.assign(new Error(`[opencode-manager] Skill source "${sourceID}" was partially applied: ${message}`), {
+            partialApplied: true,
+            cause: error,
+        });
     }
     return listSkills(options, sourceID);
 }
@@ -1718,9 +1745,13 @@ export async function listRules(options) {
         const current = await inspectFile(destination);
         let status;
         if (managed) {
-            status = sourceValid && current.kind === "file" && current.digest === managed.digest && instructions.includes(ruleInstruction(id))
-                ? "managed"
-                : "modified";
+            status =
+                sourceValid &&
+                    current.kind === "file" &&
+                    current.digest === managed.digest &&
+                    instructions.includes(ruleInstruction(id))
+                    ? "managed"
+                    : "modified";
         }
         else {
             status = current.kind === "absent" ? "absent" : "conflict";
@@ -1858,8 +1889,12 @@ export async function listAgents(options) {
         const currentDigest = current.kind === "file" || current.kind === "directory" ? current.digest : undefined;
         const inherited = !managed && current.kind === "absent" && inheritedAgent(options, id, entry.type);
         const status = managed
-            ? sourceValid && managed.type === entry.type && currentDigest === managed.digest ? "managed" : "modified"
-            : current.kind !== "absent" || inherited ? "conflict" : "absent";
+            ? sourceValid && managed.type === entry.type && currentDigest === managed.digest
+                ? "managed"
+                : "modified"
+            : current.kind !== "absent" || inherited
+                ? "conflict"
+                : "absent";
         return {
             id,
             title: entry.title,
@@ -1912,8 +1947,11 @@ export async function setAgentEnabled(options, id, enabled, mutation = {}) {
             if (target.kind === "unsupported") {
                 throw new Error(`[opencode-manager] Agent target "${id}" has the wrong type or is a symlink`);
             }
-            const conflict = typeChanged || inherited || (target.kind !== "absent" && !managed) ||
-                (managed && currentDigest !== managed.digest) || (typeChanged && target.kind !== "absent");
+            const conflict = typeChanged ||
+                inherited ||
+                (target.kind !== "absent" && !managed) ||
+                (managed && currentDigest !== managed.digest) ||
+                (typeChanged && target.kind !== "absent");
             if (conflict && !mutation.override) {
                 const reason = inherited
                     ? "conflicts with an inherited same-name agent"
@@ -2005,7 +2043,9 @@ function profileState(profile, mcps, rules, agents, skills) {
     return "partial";
 }
 async function profileSkillStates(catalog, context, state) {
-    const ids = [...new Set(catalog.profiles.flatMap((profile) => profile.skills.map((item) => `${item.source}:${item.path}`)))];
+    const ids = [
+        ...new Set(catalog.profiles.flatMap((profile) => profile.skills.map((item) => `${item.source}:${item.path}`))),
+    ];
     const result = new Map();
     await Promise.all(ids.map(async (id) => {
         const managed = own(state.skills, id);
@@ -2126,7 +2166,10 @@ export async function setProfileEnabled(options, profileID, enabled, mutation = 
         if (applied === 0)
             throw error;
         const message = error instanceof Error ? error.message : String(error);
-        throw Object.assign(new Error(`[opencode-manager] Profile "${profileID}" was partially applied: ${message}`), { partialApplied: true, cause: error });
+        throw Object.assign(new Error(`[opencode-manager] Profile "${profileID}" was partially applied: ${message}`), {
+            partialApplied: true,
+            cause: error,
+        });
     }
     return getProfile(options, profileID);
 }

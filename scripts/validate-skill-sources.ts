@@ -42,8 +42,9 @@ function parseCli(args: string[]): CliOptions {
 async function main(): Promise<void> {
   const options = parseCli(process.argv.slice(2));
   const catalog = await loadCatalog({ catalogPath: options.catalogPath });
-  const available = Object.entries(catalog.skillSources)
-    .filter((entry): entry is [string, GitSkillSource] => entry[1].type === "git");
+  const available = Object.entries(catalog.skillSources).filter(
+    (entry): entry is [string, GitSkillSource] => entry[1].type === "git",
+  );
   const requested = options.sourceIDs.length > 0 ? new Set(options.sourceIDs) : undefined;
   if (requested) {
     for (const id of requested) {
