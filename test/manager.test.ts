@@ -120,6 +120,16 @@ describe("registry", () => {
     await writeFile(value.catalogPath, `{"version":1,"mcps":{},"mcps":{},"skillSources":{},"profiles":[]}`);
     await expect(loadCatalog({ catalogPath: value.catalogPath })).rejects.toThrow("Duplicate JSON property");
   });
+
+  test("discovers every bundled custom skill with valid metadata", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "opencode-manager-bundled-skills-"));
+    temporaryRoots.push(projectRoot);
+    const skills = await listSkills({ projectRoot }, "custom");
+    expect(skills).toHaveLength(27);
+    expect(new Set(skills.map((skill) => skill.name)).size).toBe(27);
+    expect(skills.every((skill) => skill.description.length > 0 && skill.description.length <= 1024)).toBe(true);
+    expect(skills.every((skill) => skill.status === "absent")).toBe(true);
+  });
 });
 
 describe("project MCP registry", () => {

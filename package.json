@@ -1,13 +1,27 @@
 {
   "name": "@nguyenthdat/opencode-manager",
   "version": "0.1.1",
-  "description": "Project-scoped OpenCode TUI manager for grouped MCP servers and skills.",
+  "description": "Project-scoped OpenCode TUI plugin and registry for grouped MCP servers, vendor skills, and custom agent skills.",
   "keywords": [
+    "agent-skills",
+    "ai-agents",
+    "bun",
+    "code-review",
+    "debugging",
+    "developer-tools",
     "opencode",
-    "tui",
     "mcp",
+    "mcp-manager",
+    "mcp-registry",
+    "model-context-protocol",
+    "opencode-plugin",
+    "registry",
+    "skill-manager",
+    "skill-registry",
     "skills",
-    "registry"
+    "software-architecture",
+    "tui",
+    "typescript"
   ],
   "repository": {
     "type": "git",

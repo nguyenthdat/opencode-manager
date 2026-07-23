@@ -1,4 +1,4 @@
-# opencode-manager
+# Opencode Manager
 
 OpenCode TUI plugin for selecting the MCP servers and agent skills that belong
 to each project. It combines a repository-owned MCP registry, a custom skill
@@ -160,6 +160,22 @@ description: Use when the project needs this specific workflow.
 The TUI discovers it automatically under **OpenCode Manager Registry**. The
 entire skill directory, including scripts, references, assets, and nested
 skills, is copied as one bundle.
+
+The bundled registry currently includes 27 custom skills:
+
+- **Engineering workflows:** [`application-debugging`](registry/skills/application-debugging),
+  [`native-binary-debugging`](registry/skills/native-binary-debugging),
+  [`security-review`](registry/skills/security-review),
+  [`software-architect`](registry/skills/software-architect),
+  [`codebase-design`](registry/skills/codebase-design),
+  [`design-patterns`](registry/skills/design-patterns), and
+  [`uniffi`](registry/skills/uniffi).
+- **Language guidance:** Assembly, Bash, C, C++, C#, Go, Groovy, Java,
+  JavaScript, Kotlin, Lua, Objective-C, PHP, PowerShell, Python, Ruby, Rust,
+  Swift, TypeScript, and Zig.
+
+See [`registry/skills/README.md`](registry/skills/README.md) for the complete
+catalog and each skill's scope.
 
 If the destination skill already exists or a managed copy was edited, the TUI
 asks before overriding it. Approved overrides preserve the previous directory
