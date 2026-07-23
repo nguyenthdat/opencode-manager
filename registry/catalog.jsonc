@@ -279,7 +279,7 @@
       "config": {
         "type": "local",
         "command": ["uv", "run", "idalib-mcp", "--stdio", "--max-workers", "8"],
-        "environment": { "IDADIR": "/Applications/IDA Professional 9.3.app/Contents/MacOS" },
+        "environment": { "IDADIR": "{env:IDADIR}" },
         "enabled": false,
       },
     },
