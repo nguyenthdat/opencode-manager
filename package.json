@@ -1,10 +1,12 @@
 {
   "name": "@nguyenthdat/opencode-manager",
-  "version": "0.1.2",
-  "description": "Project-scoped OpenCode TUI plugin and registry for grouped MCP servers, vendor skills, and custom agent skills.",
+  "version": "0.2.0",
+  "description": "Project-scoped OpenCode TUI manager for MCPs, rules, standalone agents, agent teams, and skills.",
   "keywords": [
     "agent-skills",
     "ai-agents",
+    "agent-manager",
+    "agent-teams",
     "bun",
     "code-review",
     "debugging",
@@ -16,6 +18,8 @@
     "model-context-protocol",
     "opencode-plugin",
     "registry",
+    "rule-manager",
+    "rules",
     "skill-manager",
     "skill-registry",
     "skills",

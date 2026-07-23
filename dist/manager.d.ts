@@ -5,6 +5,15 @@ export interface McpRegistryEntry {
     tags: string[];
     config: JsonObject;
 }
+export interface FileRegistryEntry {
+    title: string;
+    description: string;
+    tags: string[];
+    path: string;
+}
+export interface AgentRegistryEntry extends FileRegistryEntry {
+    type: "single" | "team";
+}
 export interface LocalSkillSource {
     type: "local";
     title: string;
@@ -32,17 +41,22 @@ export interface RegistryProfile {
     tags: string[];
     mcps: string[];
     skills: ProfileSkillRef[];
+    rules: string[];
+    agents: string[];
 }
 export interface RegistryCatalog {
     version: 1;
     mcps: Record<string, McpRegistryEntry>;
     skillSources: Record<string, SkillSource>;
+    rules: Record<string, FileRegistryEntry>;
+    agents: Record<string, AgentRegistryEntry>;
     profiles: RegistryProfile[];
 }
 export interface ManagerOptions {
     projectRoot: string;
     catalogPath?: string;
     effectiveMcp?: Record<string, unknown>;
+    effectiveAgent?: Record<string, unknown>;
 }
 export interface MutationOptions {
     override?: boolean;
@@ -78,6 +92,17 @@ export interface SkillSourceStatus {
     license?: string;
     installed: number;
 }
+export interface RuleStatus extends FileRegistryEntry {
+    id: string;
+    status: ResourceStatus;
+    ownership: "manager" | "project" | "absent";
+}
+export interface AgentStatus extends AgentRegistryEntry {
+    id: string;
+    members: number;
+    status: ResourceStatus;
+    ownership: "manager" | "project" | "inherited" | "absent";
+}
 export interface ProfileStatus extends RegistryProfile {
     status: "enabled" | "disabled" | "partial" | "conflict";
     enabledResources: number;
@@ -87,6 +112,8 @@ export interface ProfileDetail {
     profile: ProfileStatus;
     mcps: McpStatus[];
     skills: SkillStatus[];
+    rules: RuleStatus[];
+    agents: AgentStatus[];
 }
 export declare function loadCatalog(options?: Pick<ManagerOptions, "catalogPath">): Promise<RegistryCatalog>;
 export declare function listMcps(options: ManagerOptions): Promise<McpStatus[]>;
@@ -94,6 +121,10 @@ export declare function setMcpEnabled(options: ManagerOptions, id: string, enabl
 export declare function listSkillSources(options: ManagerOptions): Promise<SkillSourceStatus[]>;
 export declare function listSkills(options: ManagerOptions, sourceID: string): Promise<SkillStatus[]>;
 export declare function setSkillEnabled(options: ManagerOptions, sourceID: string, skillPath: string, enabled: boolean, mutation?: MutationOptions): Promise<SkillStatus>;
+export declare function listRules(options: ManagerOptions): Promise<RuleStatus[]>;
+export declare function setRuleEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<RuleStatus>;
+export declare function listAgents(options: ManagerOptions): Promise<AgentStatus[]>;
+export declare function setAgentEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<AgentStatus>;
 export declare function listProfiles(options: ManagerOptions): Promise<ProfileStatus[]>;
 export declare function getProfile(options: ManagerOptions, profileID: string): Promise<ProfileDetail>;
 export declare function setProfileEnabled(options: ManagerOptions, profileID: string, enabled: boolean, mutation?: MutationOptions): Promise<ProfileDetail>;

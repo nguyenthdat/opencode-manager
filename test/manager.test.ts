@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,12 +7,16 @@ import { parse } from "jsonc-parser";
 import plugin, { resolveProjectRoot } from "../src/tui.ts";
 import {
   getProfile,
+  listAgents,
   listMcps,
   listProfiles,
+  listRules,
   listSkills,
   loadCatalog,
+  setAgentEnabled,
   setMcpEnabled,
   setProfileEnabled,
+  setRuleEnabled,
   setSkillEnabled,
 } from "../src/manager.ts";
 
@@ -27,6 +32,10 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
+function sha256(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map((path) => rm(path, { recursive: true, force: true })));
 });
@@ -38,9 +47,14 @@ async function fixture() {
   const projectRoot = join(root, "project");
   const skillRoot = join(registry, "skills", "fixture-skill");
   const nestedRoot = join(skillRoot, "nested");
+  const rulesRoot = join(registry, "rules");
+  const agentsRoot = join(registry, "agents");
+  const teamRoot = join(agentsRoot, "fixture-team");
   await Promise.all([
     mkdir(projectRoot, { recursive: true }),
     mkdir(nestedRoot, { recursive: true }),
+    mkdir(rulesRoot, { recursive: true }),
+    mkdir(teamRoot, { recursive: true }),
   ]);
   await writeFile(
     join(skillRoot, "SKILL.md"),
@@ -50,6 +64,19 @@ async function fixture() {
   await writeFile(
     join(nestedRoot, "SKILL.md"),
     `---\nname: nested-skill\ndescription: Nested skill included in the fixture bundle.\n---\n\n# Nested\n`,
+  );
+  await writeFile(join(rulesRoot, "fixture-rule.md"), "# Fixture Rule\n\nKeep fixture behavior deterministic.\n");
+  await writeFile(
+    join(agentsRoot, "fixture-agent.md"),
+    `---\ndescription: Handles a standalone fixture task.\nmode: subagent\n---\n\n# Fixture Agent\n\nReturn one deterministic result.\n`,
+  );
+  await writeFile(
+    join(teamRoot, "lead.md"),
+    `---\ndescription: Coordinates the fixture team.\nmode: subagent\n---\n\n# Lead\n\nRelay work between fixture members.\n`,
+  );
+  await writeFile(
+    join(teamRoot, "reviewer.md"),
+    `---\ndescription: Reviews fixture team output.\nmode: subagent\n---\n\n# Reviewer\n\nReturn review findings to the lead.\n`,
   );
 
   const catalogPath = join(registry, "catalog.jsonc");
@@ -79,6 +106,30 @@ async function fixture() {
             skillsPath: ".",
           },
         },
+        rules: {
+          "fixture-rule": {
+            title: "Fixture Rule",
+            description: "Fixture project instruction.",
+            tags: ["test"],
+            path: "rules/fixture-rule.md",
+          },
+        },
+        agents: {
+          "fixture-agent": {
+            type: "single",
+            title: "Fixture Agent",
+            description: "Fixture standalone agent.",
+            tags: ["test"],
+            path: "agents/fixture-agent.md",
+          },
+          "fixture-team": {
+            type: "team",
+            title: "Fixture Team",
+            description: "Fixture folder-based agent team.",
+            tags: ["test"],
+            path: "agents/fixture-team",
+          },
+        },
         profiles: [
           {
             id: "fixture",
@@ -87,6 +138,8 @@ async function fixture() {
             tags: ["test"],
             mcps: ["docs"],
             skills: [{ source: "custom", path: "fixture-skill" }],
+            rules: ["fixture-rule"],
+            agents: ["fixture-agent", "fixture-team"],
           },
         ],
       },
@@ -113,12 +166,36 @@ describe("registry", () => {
     expect(cloudflare?.type).toBe("git");
     expect(cloudflare?.type === "git" ? cloudflare.revision : "").toMatch(/^[a-f0-9]{40}$/);
     expect(catalog.profiles.some((profile) => profile.id === "qdrant")).toBe(true);
+    expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
+    expect(catalog.agents["review-team"]?.type).toBe("team");
+    expect(catalog.profiles.some((profile) => profile.id === "architecture")).toBe(true);
   });
 
   test("rejects duplicate JSONC keys", async () => {
     const value = await fixture();
     await writeFile(value.catalogPath, `{"version":1,"mcps":{},"mcps":{},"skillSources":{},"profiles":[]}`);
     await expect(loadCatalog({ catalogPath: value.catalogPath })).rejects.toThrow("Duplicate JSON property");
+  });
+
+  test("treats constructor as a normal absent resource id", async () => {
+    const value = await fixture();
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.rules.constructor = {
+      title: "Constructor Rule",
+      description: "Prototype-sensitive rule id fixture.",
+      tags: ["test"],
+      path: "rules/fixture-rule.md",
+    };
+    catalog.agents.constructor = {
+      type: "single",
+      title: "Constructor Agent",
+      description: "Prototype-sensitive agent id fixture.",
+      tags: ["test"],
+      path: "agents/fixture-agent.md",
+    };
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    expect((await listRules(value.options)).find((item) => item.id === "constructor")?.status).toBe("absent");
+    expect((await listAgents(value.options)).find((item) => item.id === "constructor")?.status).toBe("absent");
   });
 
   test("discovers every bundled custom skill with valid metadata", async () => {
@@ -129,6 +206,72 @@ describe("registry", () => {
     expect(new Set(skills.map((skill) => skill.name)).size).toBe(27);
     expect(skills.every((skill) => skill.description.length > 0 && skill.description.length <= 1024)).toBe(true);
     expect(skills.every((skill) => skill.status === "absent")).toBe(true);
+  });
+
+  test("discovers bundled rules, standalone agents, and folder-based teams", async () => {
+    const projectRoot = await mkdtemp(join(tmpdir(), "opencode-manager-bundled-agents-"));
+    temporaryRoots.push(projectRoot);
+    const [rules, agents] = await Promise.all([listRules({ projectRoot }), listAgents({ projectRoot })]);
+    expect(rules.map((rule) => rule.id)).toEqual(["codebase-memory", "parallel-agents"]);
+    expect(agents.map((agent) => agent.id)).toEqual(["search", "software-architect", "researcher", "review-team"]);
+    expect(agents.find((agent) => agent.id === "researcher")).toMatchObject({ type: "team", members: 6 });
+    expect(agents.find((agent) => agent.id === "review-team")).toMatchObject({ type: "team", members: 3 });
+    expect(agents.filter((agent) => agent.type === "single").every((agent) => agent.members === 1)).toBe(true);
+    const researchOrchestrator = await readFile(
+      join(import.meta.dir, "..", "registry", "agents", "researcher", "research.md"),
+      "utf8",
+    );
+    expect(researchOrchestrator).toContain('"researcher/research-web": allow');
+  });
+
+  test("loads rule and agent state from projects created before those registries existed", async () => {
+    const value = await fixture();
+    const managerDir = join(value.projectRoot, ".opencode", ".opencode-manager");
+    await mkdir(managerDir, { recursive: true });
+    await writeFile(join(managerDir, "state.json"), `{"version":1,"mcps":{},"skills":{}}\n`);
+    const [rules, agents] = await Promise.all([listRules(value.options), listAgents(value.options)]);
+    expect(rules.every((rule) => rule.status === "absent")).toBe(true);
+    expect(agents.every((agent) => agent.status === "absent")).toBe(true);
+  });
+
+  test("migrates digest-only rule and agent state", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    const managerDir = join(configDir, ".opencode-manager");
+    const rule = await readFile(join(value.registry, "rules", "fixture-rule.md"), "utf8");
+    const agent = await readFile(join(value.registry, "agents", "fixture-agent.md"), "utf8");
+    await Promise.all([
+      mkdir(join(configDir, "instructions"), { recursive: true }),
+      mkdir(join(configDir, "agents"), { recursive: true }),
+      mkdir(join(configDir, "agents", "fixture-agent"), { recursive: true }),
+      mkdir(managerDir, { recursive: true }),
+    ]);
+    await writeFile(join(configDir, "instructions", "fixture-rule.md"), rule);
+    await writeFile(join(configDir, "agents", "fixture-agent.md"), agent);
+    await writeFile(join(configDir, "agents", "fixture-agent", "member.md"), "unrelated nested agent\n");
+    await writeFile(
+      join(configDir, "opencode.jsonc"),
+      `{"share":"disabled"}\n`,
+    );
+    await writeFile(
+      join(value.projectRoot, "opencode.jsonc"),
+      `{"instructions":[".opencode/instructions/fixture-rule.md"]}\n`,
+    );
+    await writeFile(
+      join(managerDir, "state.json"),
+      `${JSON.stringify({
+        version: 1,
+        mcps: {},
+        skills: {},
+        rules: { "fixture-rule": { digest: sha256(rule) } },
+        agents: { "fixture-agent": { digest: sha256(agent) } },
+      })}\n`,
+    );
+    expect((await listRules(value.options))[0]?.status).toBe("managed");
+    expect((await listAgents(value.options)).find((item) => item.id === "fixture-agent")?.status).toBe("managed");
+    await setAgentEnabled(value.options, "fixture-agent", false);
+    expect(await exists(join(configDir, "agents", "fixture-agent.md"))).toBe(false);
+    expect(await exists(join(configDir, "agents", "fixture-agent", "member.md"))).toBe(true);
   });
 });
 
@@ -324,6 +467,246 @@ describe("project skill registry", () => {
   });
 });
 
+describe("project rule registry", () => {
+  test("installs an instruction reference and archives a modified rule on confirmed disable", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "opencode.jsonc"),
+      `{
+  // preserve unrelated project instructions
+  "instructions": ["docs/project.md"],
+  "share": "manual"
+}
+`,
+    );
+
+    expect((await listRules(value.options))[0]).toMatchObject({ id: "fixture-rule", status: "absent" });
+    const installed = await setRuleEnabled(value.options, "fixture-rule", true);
+    expect(installed).toMatchObject({ status: "managed", ownership: "manager" });
+    const ruleFile = join(configDir, "instructions", "fixture-rule.md");
+    expect(await readFile(ruleFile, "utf8")).toContain("Keep fixture behavior deterministic");
+    let config = parse(await readFile(join(configDir, "opencode.jsonc"), "utf8"));
+    expect(config.instructions).toEqual(["docs/project.md", ".opencode/instructions/fixture-rule.md"]);
+    expect(config.share).toBe("manual");
+
+    await writeFile(
+      join(configDir, "opencode.jsonc"),
+      `${JSON.stringify({ instructions: ["docs/project.md"], share: "manual" }, null, 2)}\n`,
+    );
+    expect((await listRules(value.options))[0]?.status).toBe("modified");
+    await expect(setRuleEnabled(value.options, "fixture-rule", false)).rejects.toThrow("instruction reference was modified");
+    await setRuleEnabled(value.options, "fixture-rule", true, { override: true });
+
+    await writeFile(ruleFile, "project-modified rule\n");
+    await expect(setRuleEnabled(value.options, "fixture-rule", false)).rejects.toThrow("modified rule");
+    await setRuleEnabled(value.options, "fixture-rule", false, { override: true });
+    expect(await exists(ruleFile)).toBe(false);
+    config = parse(await readFile(join(configDir, "opencode.jsonc"), "utf8"));
+    expect(config.instructions).toEqual(["docs/project.md"]);
+    const backups = await readdir(join(configDir, ".opencode-manager", "backups", "rules", "disabled"));
+    expect(backups).toHaveLength(1);
+  });
+
+  test("removes a rule from the config it originally patched when config precedence changes", async () => {
+    const value = await fixture();
+    const rootConfig = join(value.projectRoot, "opencode.jsonc");
+    await writeFile(rootConfig, `{"share":"manual"}\n`);
+    await setRuleEnabled(value.options, "fixture-rule", true);
+    expect(parse(await readFile(rootConfig, "utf8")).instructions).toEqual([".opencode/instructions/fixture-rule.md"]);
+
+    const nestedConfig = join(value.projectRoot, ".opencode", "opencode.jsonc");
+    await writeFile(nestedConfig, `{"share":"disabled"}\n`);
+    await setRuleEnabled(value.options, "fixture-rule", false);
+    expect(parse(await readFile(rootConfig, "utf8")).instructions).toEqual([]);
+    expect(parse(await readFile(nestedConfig, "utf8")).instructions).toBeUndefined();
+  });
+
+  test("preserves comments inside an existing instructions array", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    await mkdir(configDir, { recursive: true });
+    const configFile = join(configDir, "opencode.jsonc");
+    await writeFile(
+      configFile,
+      `{
+  "instructions": [
+    // keep this project instruction
+    "docs/project.md",
+  ],
+}
+`,
+    );
+    await setRuleEnabled(value.options, "fixture-rule", true);
+    await setRuleEnabled(value.options, "fixture-rule", false);
+    const source = await readFile(configFile, "utf8");
+    expect(source).toContain("// keep this project instruction");
+    expect(parse(source).instructions).toEqual(["docs/project.md"]);
+  });
+
+  test("can disable a managed rule after its registry source disappears", async () => {
+    const value = await fixture();
+    await setRuleEnabled(value.options, "fixture-rule", true);
+    await rm(join(value.registry, "rules", "fixture-rule.md"));
+    expect((await listRules(value.options))[0]?.status).toBe("modified");
+    const disabled = await setRuleEnabled(value.options, "fixture-rule", false);
+    expect(disabled.status).toBe("absent");
+  });
+
+  test("rejects a state-controlled config path outside supported OpenCode config files", async () => {
+    const value = await fixture();
+    await setRuleEnabled(value.options, "fixture-rule", true);
+    const packageFile = join(value.projectRoot, "package.json");
+    const packageSource = `{"name":"fixture","instructions":[".opencode/instructions/fixture-rule.md"]}\n`;
+    await writeFile(packageFile, packageSource);
+    const stateFile = join(value.projectRoot, ".opencode", ".opencode-manager", "state.json");
+    const state = JSON.parse(await readFile(stateFile, "utf8"));
+    state.rules["fixture-rule"].configFile = "package.json";
+    await writeFile(stateFile, `${JSON.stringify(state, null, 2)}\n`);
+    await expect(listRules(value.options)).rejects.toThrow("not a supported OpenCode project config");
+    expect(await readFile(packageFile, "utf8")).toBe(packageSource);
+  });
+
+  test("rejects a symlinked project config before mutating rule resources", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    await mkdir(configDir, { recursive: true });
+    const target = join(value.projectRoot, "config-target.jsonc");
+    const source = `{"share":"manual"}\n`;
+    await writeFile(target, source);
+    await symlink(target, join(configDir, "opencode.jsonc"));
+    await expect(setRuleEnabled(value.options, "fixture-rule", true)).rejects.toThrow("regular non-symlink file");
+    expect(await readFile(target, "utf8")).toBe(source);
+    expect(await exists(join(configDir, "instructions", "fixture-rule.md"))).toBe(false);
+  });
+});
+
+describe("project agent registry", () => {
+  test("installs standalone agents and complete folder-based teams", async () => {
+    const value = await fixture();
+    const before = await listAgents(value.options);
+    expect(before.find((agent) => agent.id === "fixture-agent")).toMatchObject({ type: "single", members: 1, status: "absent" });
+    expect(before.find((agent) => agent.id === "fixture-team")).toMatchObject({ type: "team", members: 2, status: "absent" });
+
+    await setAgentEnabled(value.options, "fixture-agent", true);
+    const team = await setAgentEnabled(value.options, "fixture-team", true);
+    expect(team).toMatchObject({ status: "managed", type: "team", members: 2 });
+    const agentsDir = join(value.projectRoot, ".opencode", "agents");
+    expect(await readFile(join(agentsDir, "fixture-agent.md"), "utf8")).toContain("Fixture Agent");
+    expect(await readFile(join(agentsDir, "fixture-team", "lead.md"), "utf8")).toContain("# Lead");
+    expect(await readFile(join(agentsDir, "fixture-team", "reviewer.md"), "utf8")).toContain("# Reviewer");
+
+    await writeFile(join(agentsDir, "fixture-team", "reviewer.md"), "project edit\n");
+    await expect(setAgentEnabled(value.options, "fixture-team", false)).rejects.toThrow("modified agent resource");
+    await setAgentEnabled(value.options, "fixture-team", false, { override: true });
+    expect(await exists(join(agentsDir, "fixture-team"))).toBe(false);
+    const backups = await readdir(join(value.projectRoot, ".opencode", ".opencode-manager", "backups", "agents", "disabled"));
+    expect(backups).toHaveLength(1);
+  });
+
+  test("requires confirmation before shadowing an inherited same-name agent", async () => {
+    const value = await fixture();
+    const options = { ...value.options, effectiveAgent: { "fixture-agent": { description: "global agent" } } };
+    expect((await listAgents(options)).find((agent) => agent.id === "fixture-agent")).toMatchObject({
+      status: "conflict",
+      ownership: "inherited",
+    });
+    await expect(setAgentEnabled(options, "fixture-agent", true)).rejects.toThrow("inherited same-name agent");
+    const installed = await setAgentEnabled(options, "fixture-agent", true, { override: true });
+    expect(installed).toMatchObject({ status: "managed", ownership: "manager" });
+  });
+
+  test("does not treat a standalone inherited name as a team-member conflict", async () => {
+    const value = await fixture();
+    const exact = { ...value.options, effectiveAgent: { "fixture-team": { description: "standalone" } } };
+    expect((await listAgents(exact)).find((agent) => agent.id === "fixture-team")).toMatchObject({
+      status: "absent",
+      ownership: "absent",
+    });
+    const nested = { ...value.options, effectiveAgent: { "fixture-team/lead": { description: "nested" } } };
+    expect((await listAgents(nested)).find((agent) => agent.id === "fixture-team")).toMatchObject({
+      status: "conflict",
+      ownership: "inherited",
+    });
+  });
+
+  test("archives the old destination when an agent changes between single and team", async () => {
+    const value = await fixture();
+    const agentsDir = join(value.projectRoot, ".opencode", "agents");
+    await setAgentEnabled(value.options, "fixture-agent", true);
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.agents["fixture-agent"].type = "team";
+    catalog.agents["fixture-agent"].path = "agents/fixture-team";
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    expect((await listAgents(value.options)).find((agent) => agent.id === "fixture-agent")?.status).toBe("modified");
+    await expect(setAgentEnabled(value.options, "fixture-agent", true)).rejects.toThrow("changed registry type");
+    await setAgentEnabled(value.options, "fixture-agent", true, { override: true });
+    expect(await exists(join(agentsDir, "fixture-agent.md"))).toBe(false);
+    expect(await exists(join(agentsDir, "fixture-agent", "lead.md"))).toBe(true);
+
+    catalog.agents["fixture-agent"].type = "single";
+    catalog.agents["fixture-agent"].path = "agents/fixture-agent.md";
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    await setAgentEnabled(value.options, "fixture-agent", true, { override: true });
+    expect(await exists(join(agentsDir, "fixture-agent"))).toBe(false);
+    expect(await exists(join(agentsDir, "fixture-agent.md"))).toBe(true);
+  });
+
+  test("can disable a managed team after its registry source disappears", async () => {
+    const value = await fixture();
+    await setAgentEnabled(value.options, "fixture-team", true);
+    await rm(join(value.registry, "agents", "fixture-team"), { recursive: true });
+    expect((await listAgents(value.options)).find((agent) => agent.id === "fixture-team")?.status).toBe("modified");
+    const disabled = await setAgentEnabled(value.options, "fixture-team", false);
+    expect(disabled.status).toBe("absent");
+  });
+
+  test("rejects malformed known agent frontmatter fields", async () => {
+    const value = await fixture();
+    const file = join(value.registry, "agents", "fixture-agent.md");
+    await writeFile(
+      file,
+      `---\ndescription: Invalid steps fixture.\nmode: subagent\nsteps: many\n---\n\n# Invalid\n`,
+    );
+    await expect(listAgents(value.options)).rejects.toThrow("steps must be a positive integer");
+  });
+
+  test("accepts permission shorthand and rejects pattern maps for action-only permissions", async () => {
+    const value = await fixture();
+    const file = join(value.registry, "agents", "fixture-agent.md");
+    await writeFile(
+      file,
+      `---\ndescription: Permission shorthand fixture.\nmode: subagent\npermission: deny\n---\n\n# Valid\n`,
+    );
+    expect((await listAgents(value.options)).find((item) => item.id === "fixture-agent")?.status).toBe("absent");
+    await writeFile(
+      file,
+      `---\ndescription: Invalid permission fixture.\nmode: subagent\npermission:\n  webfetch:\n    "*": allow\n---\n\n# Invalid\n`,
+    );
+    await expect(listAgents(value.options)).rejects.toThrow('permission for "webfetch" is invalid');
+  });
+
+  test("keeps catalog-removed managed rules and agents visible until cleanup", async () => {
+    const value = await fixture();
+    await setRuleEnabled(value.options, "fixture-rule", true);
+    await setAgentEnabled(value.options, "fixture-agent", true);
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    delete catalog.rules["fixture-rule"];
+    delete catalog.agents["fixture-agent"];
+    catalog.profiles[0].rules = [];
+    catalog.profiles[0].agents = ["fixture-team"];
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+
+    expect((await listRules(value.options)).find((rule) => rule.id === "fixture-rule")?.status).toBe("managed");
+    expect((await listAgents(value.options)).find((agent) => agent.id === "fixture-agent")?.status).toBe("managed");
+    expect((await setRuleEnabled(value.options, "fixture-rule", false)).status).toBe("absent");
+    expect((await setAgentEnabled(value.options, "fixture-agent", false)).status).toBe("absent");
+    expect((await listRules(value.options)).some((rule) => rule.id === "fixture-rule")).toBe(false);
+    expect((await listAgents(value.options)).some((agent) => agent.id === "fixture-agent")).toBe(false);
+  });
+});
+
 describe("profiles", () => {
   test("applies and removes a project profile", async () => {
     const value = await fixture();
@@ -331,13 +714,17 @@ describe("profiles", () => {
     expect(enabled.profile.status).toBe("enabled");
     expect(enabled.mcps[0]?.enabled).toBe(true);
     expect(enabled.skills[0]?.status).toBe("managed");
-    expect((await listProfiles(value.options))[0]?.enabledResources).toBe(2);
+    expect(enabled.rules[0]?.status).toBe("managed");
+    expect(enabled.agents.every((agent) => agent.status === "managed")).toBe(true);
+    expect((await listProfiles(value.options))[0]?.enabledResources).toBe(5);
 
     const disabled = await setProfileEnabled(value.options, "fixture", false);
     expect(disabled.profile.status).toBe("disabled");
     expect(disabled.mcps[0]?.enabled).toBe(false);
     expect(disabled.skills[0]?.status).toBe("absent");
-    expect((await getProfile(value.options, "fixture")).profile.totalResources).toBe(2);
+    expect(disabled.rules[0]?.status).toBe("absent");
+    expect(disabled.agents.every((agent) => agent.status === "absent")).toBe(true);
+    expect((await getProfile(value.options, "fixture")).profile.totalResources).toBe(5);
   });
 
   test("disabling a never-enabled profile does not create MCP config", async () => {
@@ -345,6 +732,30 @@ describe("profiles", () => {
     const disabled = await setProfileEnabled(value.options, "fixture", false);
     expect(disabled.profile.status).toBe("disabled");
     expect(await exists(join(value.projectRoot, ".opencode", "opencode.jsonc"))).toBe(false);
+  });
+
+  test("reports modified rules and teams as profile conflicts", async () => {
+    const value = await fixture();
+    await setProfileEnabled(value.options, "fixture", true);
+    await writeFile(
+      join(value.projectRoot, ".opencode", "agents", "fixture-team", "reviewer.md"),
+      "project edit\n",
+    );
+    const profile = (await listProfiles(value.options))[0];
+    expect(profile?.status).toBe("conflict");
+    expect(profile?.enabledResources).toBe(4);
+  });
+
+  test("reports a modified managed skill as a profile conflict", async () => {
+    const value = await fixture();
+    await setProfileEnabled(value.options, "fixture", true);
+    await writeFile(
+      join(value.projectRoot, ".opencode", "skills", "fixture-skill", "reference.txt"),
+      "project edit\n",
+    );
+    const profile = (await listProfiles(value.options))[0];
+    expect(profile?.status).toBe("conflict");
+    expect(profile?.enabledResources).toBe(4);
   });
 });
 

@@ -7,21 +7,13 @@
       "title": "Codebase Memory",
       "description": "Code graph, architecture, symbol search, and change impact analysis.",
       "tags": ["code-intelligence", "memory"],
-      "config": {
-        "type": "local",
-        "command": ["codebase-memory-mcp"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["codebase-memory-mcp"], "enabled": false },
     },
     "git": {
       "title": "Git",
       "description": "Local Git repository operations through MCP.",
       "tags": ["git", "source-control"],
-      "config": {
-        "type": "local",
-        "command": ["uvx", "mcp-server-git"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["uvx", "mcp-server-git"], "enabled": false },
     },
     "github": {
       "title": "GitHub",
@@ -31,8 +23,8 @@
         "type": "remote",
         "url": "https://api.githubcopilot.com/mcp/",
         "headers": { "Authorization": "Bearer {env:GITHUB_TOKEN}" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "context7": {
       "title": "Context7",
@@ -42,8 +34,8 @@
         "type": "remote",
         "url": "https://mcp.context7.com/mcp",
         "headers": { "Authorization": "Bearer {env:CONTEXT7_API_KEY}" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "exa": {
       "title": "Exa",
@@ -53,8 +45,8 @@
         "type": "remote",
         "url": "https://mcp.exa.ai/mcp?tools=web_search_exa,web_fetch_exa,web_search_advanced_exa",
         "headers": { "x-api-key": "{env:EXA_API_KEY}" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "microsoft-docs": {
       "title": "Microsoft Learn",
@@ -63,8 +55,8 @@
       "config": {
         "type": "remote",
         "url": "https://learn.microsoft.com/api/mcp",
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "google-developer-knowledge": {
       "title": "Google Developer Knowledge",
@@ -74,8 +66,8 @@
         "type": "remote",
         "url": "https://developerknowledge.googleapis.com/mcp",
         "headers": { "X-Goog-Api-Key": "{env:GOOGLE_DEVELOPER_API_KEY}" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "huggingface": {
       "title": "Hugging Face",
@@ -85,18 +77,14 @@
         "type": "remote",
         "url": "https://huggingface.co/mcp",
         "headers": { "Authorization": "Bearer {env:HF_TOKEN}" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "svelte": {
       "title": "Svelte",
       "description": "Official Svelte framework documentation.",
       "tags": ["frontend", "svelte"],
-      "config": {
-        "type": "remote",
-        "url": "https://mcp.svelte.dev/mcp",
-        "enabled": false
-      }
+      "config": { "type": "remote", "url": "https://mcp.svelte.dev/mcp", "enabled": false },
     },
     "aws": {
       "title": "AWS Documentation",
@@ -105,22 +93,15 @@
       "config": {
         "type": "local",
         "command": ["uvx", "awslabs.aws-documentation-mcp-server@latest"],
-        "environment": {
-          "FASTMCP_LOG_LEVEL": "ERROR",
-          "AWS_DOCUMENTATION_PARTITION": "aws"
-        },
-        "enabled": false
-      }
+        "environment": { "FASTMCP_LOG_LEVEL": "ERROR", "AWS_DOCUMENTATION_PARTITION": "aws" },
+        "enabled": false,
+      },
     },
     "docker": {
       "title": "Docker",
       "description": "Docker engine and container management.",
       "tags": ["containers", "docker"],
-      "config": {
-        "type": "local",
-        "command": ["uvx", "docker-mcp"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["uvx", "docker-mcp"], "enabled": false },
     },
     "azure": {
       "title": "Azure",
@@ -129,8 +110,8 @@
       "config": {
         "type": "local",
         "command": ["bunx", "-y", "@azure/mcp@latest", "server", "start"],
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "cloudflare-docs": {
       "title": "Cloudflare Docs",
@@ -139,8 +120,8 @@
       "config": {
         "type": "remote",
         "url": "https://docs.mcp.cloudflare.com/mcp",
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "cloudflare-workers-builds": {
       "title": "Cloudflare Workers Builds",
@@ -149,8 +130,8 @@
       "config": {
         "type": "remote",
         "url": "https://builds.mcp.cloudflare.com/mcp",
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "cloudflare-workers-bindings": {
       "title": "Cloudflare Workers Bindings",
@@ -159,8 +140,8 @@
       "config": {
         "type": "remote",
         "url": "https://bindings.mcp.cloudflare.com/mcp",
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "cloudflare-observability": {
       "title": "Cloudflare Observability",
@@ -169,28 +150,20 @@
       "config": {
         "type": "remote",
         "url": "https://observability.mcp.cloudflare.com/mcp",
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "clickhouse": {
       "title": "ClickHouse",
       "description": "ClickHouse Cloud database operations and documentation.",
       "tags": ["clickhouse", "database"],
-      "config": {
-        "type": "remote",
-        "url": "https://mcp.clickhouse.cloud/mcp",
-        "enabled": false
-      }
+      "config": { "type": "remote", "url": "https://mcp.clickhouse.cloud/mcp", "enabled": false },
     },
     "redpanda": {
       "title": "Redpanda",
       "description": "Redpanda streaming platform documentation.",
       "tags": ["kafka", "redpanda", "streaming"],
-      "config": {
-        "type": "remote",
-        "url": "https://docs.redpanda.com/mcp",
-        "enabled": false
-      }
+      "config": { "type": "remote", "url": "https://docs.redpanda.com/mcp", "enabled": false },
     },
     "cloakbrowser": {
       "title": "CloakBrowser",
@@ -201,10 +174,10 @@
         "command": ["bunx", "-y", "cloakbrowser-mcp@latest"],
         "environment": {
           "PLAYWRIGHT_MCP_OUTPUT_DIR": ".cloakbrowser-artifacts",
-          "PLAYWRIGHT_MCP_HEADLESS": "true"
+          "PLAYWRIGHT_MCP_HEADLESS": "true",
         },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "playwright": {
       "title": "Playwright",
@@ -213,8 +186,8 @@
       "config": {
         "type": "local",
         "command": ["bunx", "-y", "@playwright/mcp@latest", "--browser", "chrome"],
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "chrome.devtools": {
       "title": "Chrome DevTools",
@@ -222,9 +195,15 @@
       "tags": ["browser", "chrome", "debugging"],
       "config": {
         "type": "local",
-        "command": ["bunx", "-y", "chrome-devtools-mcp@latest", "--autoConnect", "--no-usage-statistics"],
-        "enabled": false
-      }
+        "command": [
+          "bunx",
+          "-y",
+          "chrome-devtools-mcp@latest",
+          "--autoConnect",
+          "--no-usage-statistics",
+        ],
+        "enabled": false,
+      },
     },
     "firefox.devtools": {
       "title": "Firefox DevTools",
@@ -232,10 +211,17 @@
       "tags": ["browser", "debugging", "firefox"],
       "config": {
         "type": "local",
-        "command": ["bunx", "-y", "@mozilla/firefox-devtools-mcp@latest", "--headless", "--viewport", "1280x720"],
+        "command": [
+          "bunx",
+          "-y",
+          "@mozilla/firefox-devtools-mcp@latest",
+          "--headless",
+          "--viewport",
+          "1280x720",
+        ],
         "environment": { "START_URL": "about:blank" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "burp.pro": {
       "title": "Burp Suite Professional",
@@ -243,39 +229,33 @@
       "tags": ["security", "web-security"],
       "config": {
         "type": "local",
-        "command": ["java", "-jar", "{env:HOME}/.BurpSuite/mcp-proxy.jar", "--sse-url", "http://127.0.0.1:9876"],
-        "enabled": false
-      }
+        "command": [
+          "java",
+          "-jar",
+          "{env:HOME}/.BurpSuite/mcp-proxy.jar",
+          "--sse-url",
+          "http://127.0.0.1:9876",
+        ],
+        "enabled": false,
+      },
     },
     "filescan": {
       "title": "FileScan",
       "description": "File and malware analysis tooling.",
       "tags": ["malware", "security"],
-      "config": {
-        "type": "local",
-        "command": ["filescan-mcp"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["filescan-mcp"], "enabled": false },
     },
     "microsoft.defender": {
       "title": "Microsoft Defender",
       "description": "Microsoft Defender security operations.",
       "tags": ["microsoft", "security"],
-      "config": {
-        "type": "local",
-        "command": ["microsoft-defender-mcp-server"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["microsoft-defender-mcp-server"], "enabled": false },
     },
     "cyble.vision": {
       "title": "Cyble Vision",
       "description": "Cyber threat intelligence from Cyble Vision.",
       "tags": ["security", "threat-intelligence"],
-      "config": {
-        "type": "local",
-        "command": ["cyble-mcp-server"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["cyble-mcp-server"], "enabled": false },
     },
     "wiz": {
       "title": "Wiz",
@@ -287,10 +267,10 @@
         "headers": {
           "Wiz-Client-Id": "{env:WIZ_CLIENT_ID}",
           "Wiz-Client-Secret": "{env:WIZ_CLIENT_SECRET}",
-          "Wiz-DataCenter": "{env:WIZ_TENANT_DC}"
+          "Wiz-DataCenter": "{env:WIZ_TENANT_DC}",
         },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "ida.pro": {
       "title": "IDA Pro",
@@ -300,8 +280,8 @@
         "type": "local",
         "command": ["uv", "run", "idalib-mcp", "--stdio", "--max-workers", "8"],
         "environment": { "IDADIR": "/Applications/IDA Professional 9.3.app/Contents/MacOS" },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "docs.rs": {
       "title": "docs.rs",
@@ -310,48 +290,32 @@
       "config": {
         "type": "local",
         "command": ["bunx", "-y", "@nuskey8/docs-rs-mcp@latest"],
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "crates.io": {
       "title": "crates.io",
       "description": "Rust crate registry search and metadata.",
       "tags": ["packages", "rust"],
-      "config": {
-        "type": "local",
-        "command": ["cratesio-mcp"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["cratesio-mcp"], "enabled": false },
     },
     "cargo": {
       "title": "Cargo",
       "description": "Cargo project and dependency operations.",
       "tags": ["build", "rust"],
-      "config": {
-        "type": "local",
-        "command": ["cargo-mcp", "serve"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["cargo-mcp", "serve"], "enabled": false },
     },
     "ferroscope": {
       "title": "Ferroscope",
       "description": "Rust codebase analysis and inspection.",
       "tags": ["code-intelligence", "rust"],
-      "config": {
-        "type": "local",
-        "command": ["ferroscope"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["ferroscope"], "enabled": false },
     },
     "javadoc": {
       "title": "Javadoc",
       "description": "Java API documentation search.",
       "tags": ["documentation", "java"],
-      "config": {
-        "type": "local",
-        "command": ["bunx", "-y", "javadoc-mcp"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["bunx", "-y", "javadoc-mcp"], "enabled": false },
     },
     "xcodebuild": {
       "title": "XcodeBuild",
@@ -360,8 +324,8 @@
       "config": {
         "type": "local",
         "command": ["bunx", "-y", "xcodebuildmcp@latest", "mcp"],
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "android": {
       "title": "Android",
@@ -370,28 +334,20 @@
       "config": {
         "type": "local",
         "command": ["uvx", "--python", "3.13", "android-mcp"],
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "d2": {
       "title": "D2",
       "description": "D2 diagram generation.",
       "tags": ["diagrams", "documentation"],
-      "config": {
-        "type": "local",
-        "command": ["d2-mcp", "--image-type", "png"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["d2-mcp", "--image-type", "png"], "enabled": false },
     },
     "time": {
       "title": "Time",
       "description": "Timezone and current-time utilities.",
       "tags": ["productivity", "time"],
-      "config": {
-        "type": "local",
-        "command": ["uvx", "mcp-server-time"],
-        "enabled": false
-      }
+      "config": { "type": "local", "command": ["uvx", "mcp-server-time"], "enabled": false },
     },
     "atlassian": {
       "title": "Atlassian",
@@ -406,10 +362,10 @@
           "JIRA_API_TOKEN": "{env:JIRA_API_TOKEN}",
           "CONFLUENCE_URL": "{env:CONFLUENCE_URL}",
           "CONFLUENCE_USERNAME": "{env:CONFLUENCE_USERNAME}",
-          "CONFLUENCE_API_TOKEN": "{env:CONFLUENCE_API_TOKEN}"
+          "CONFLUENCE_API_TOKEN": "{env:CONFLUENCE_API_TOKEN}",
         },
-        "enabled": false
-      }
+        "enabled": false,
+      },
     },
     "adspower-local-api": {
       "title": "AdsPower Local API",
@@ -419,9 +375,9 @@
         "type": "local",
         "command": ["bunx", "-y", "local-api-mcp-typescript"],
         "environment": { "PORT": "50325", "API_KEY": "{env:ADSPOWER_API_KEY}" },
-        "enabled": false
-      }
-    }
+        "enabled": false,
+      },
+    },
   },
 
   // Git sources are pinned so selecting a skill is reproducible and reviewable.
@@ -430,7 +386,7 @@
       "type": "local",
       "title": "OpenCode Manager Registry",
       "path": "skills",
-      "skillsPath": "."
+      "skillsPath": ".",
     },
     "cloudflare": {
       "type": "git",
@@ -438,7 +394,7 @@
       "repository": "https://github.com/cloudflare/skills.git",
       "revision": "70215303d44a81a0db3219428f4825b604fc6061",
       "skillsPath": "skills",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
     },
     "clickhouse": {
       "type": "git",
@@ -446,7 +402,7 @@
       "repository": "https://github.com/ClickHouse/agent-skills.git",
       "revision": "65ce71fce803014afb69279535c82c72dc55d9ba",
       "skillsPath": "skills",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
     },
     "redpanda": {
       "type": "git",
@@ -454,7 +410,7 @@
       "repository": "https://github.com/redpanda-data/skills.git",
       "revision": "a2d1ddbca08649e79617d9586dfc3b3f0ae8b2fd",
       "skillsPath": "skills",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
     },
     "qdrant": {
       "type": "git",
@@ -462,15 +418,63 @@
       "repository": "https://github.com/qdrant/skills.git",
       "revision": "e24485f0e76d3d4504bf5045ead9a42b56561521",
       "skillsPath": "skills",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
     },
     "windmill": {
       "type": "git",
       "title": "Windmill CLI Skills",
       "repository": "https://github.com/windmill-labs/windmill-cli-docs.git",
       "revision": "8532494d66f6c5053435f5b4f8401923f8aa5f4a",
-      "skillsPath": "skills"
-    }
+      "skillsPath": "skills",
+    },
+  },
+
+  // Rules are installed as project instruction files and referenced from project config.
+  "rules": {
+    "codebase-memory": {
+      "title": "Codebase Memory First",
+      "description": "Prefer the project code graph for architecture, symbol, call-path, and impact discovery.",
+      "tags": ["code-intelligence", "workflow"],
+      "path": "rules/codebase-memory.md",
+    },
+    "parallel-agents": {
+      "title": "Parallel Agent Orchestration",
+      "description": "Fan out independent workstreams to focused subagents and reconcile results through the primary agent.",
+      "tags": ["agents", "orchestration"],
+      "path": "rules/parallel-agents.md",
+    },
+  },
+
+  // A single agent installs one file; a team installs every agent in its folder as one unit.
+  "agents": {
+    "search": {
+      "type": "single",
+      "title": "Search Researcher",
+      "description": "Collects, validates, and summarizes current external information with source evidence.",
+      "tags": ["research", "web"],
+      "path": "agents/search.md",
+    },
+    "software-architect": {
+      "type": "single",
+      "title": "Software Architect",
+      "description": "Analyzes system boundaries, trade-offs, migration paths, and architecture decisions.",
+      "tags": ["architecture", "design"],
+      "path": "agents/software-architect.md",
+    },
+    "researcher": {
+      "type": "team",
+      "title": "Research Team",
+      "description": "Orchestrated web, academic, community, validation, and synthesis research team.",
+      "tags": ["research", "deep-research"],
+      "path": "agents/researcher",
+    },
+    "review-team": {
+      "type": "team",
+      "title": "Review Team",
+      "description": "Producer-reviewer team with a lead, security reviewer, and quality reviewer.",
+      "tags": ["code-review", "security"],
+      "path": "agents/review-team",
+    },
   },
 
   "profiles": [
@@ -480,15 +484,25 @@
       "description": "Local repository intelligence and GitHub collaboration.",
       "tags": ["git", "github"],
       "mcps": ["codebase-memory", "git", "github"],
-      "skills": []
+      "skills": [],
+      "rules": ["codebase-memory"],
     },
     {
       "id": "research",
       "title": "Research and Documentation",
       "description": "Current web, framework, platform, and model documentation.",
       "tags": ["documentation", "research"],
-      "mcps": ["context7", "exa", "microsoft-docs", "google-developer-knowledge", "huggingface", "svelte"],
-      "skills": []
+      "mcps": [
+        "context7",
+        "exa",
+        "microsoft-docs",
+        "google-developer-knowledge",
+        "huggingface",
+        "svelte",
+      ],
+      "skills": [],
+      "rules": ["parallel-agents"],
+      "agents": ["researcher"],
     },
     {
       "id": "cloud-platforms",
@@ -496,21 +510,26 @@
       "description": "AWS, Azure, and Docker platform tooling.",
       "tags": ["cloud", "containers"],
       "mcps": ["aws", "azure", "docker"],
-      "skills": []
+      "skills": [],
     },
     {
       "id": "cloudflare",
       "title": "Cloudflare Workers",
       "description": "Cloudflare platform MCPs with a curated Workers skill set.",
       "tags": ["cloudflare", "edge", "typescript"],
-      "mcps": ["cloudflare-docs", "cloudflare-workers-builds", "cloudflare-workers-bindings", "cloudflare-observability"],
+      "mcps": [
+        "cloudflare-docs",
+        "cloudflare-workers-builds",
+        "cloudflare-workers-bindings",
+        "cloudflare-observability",
+      ],
       "skills": [
         { "source": "cloudflare", "path": "cloudflare" },
         { "source": "cloudflare", "path": "workers-best-practices" },
         { "source": "cloudflare", "path": "wrangler" },
         { "source": "cloudflare", "path": "durable-objects" },
-        { "source": "cloudflare", "path": "agents-sdk" }
-      ]
+        { "source": "cloudflare", "path": "agents-sdk" },
+      ],
     },
     {
       "id": "clickhouse",
@@ -521,8 +540,8 @@
       "skills": [
         { "source": "clickhouse", "path": "clickhouse-best-practices" },
         { "source": "clickhouse", "path": "clickhouse-js-node-coding" },
-        { "source": "clickhouse", "path": "clickhousectl-local-dev" }
-      ]
+        { "source": "clickhouse", "path": "clickhousectl-local-dev" },
+      ],
     },
     {
       "id": "redpanda",
@@ -533,8 +552,8 @@
       "skills": [
         { "source": "redpanda", "path": "streaming" },
         { "source": "redpanda", "path": "connect" },
-        { "source": "redpanda", "path": "rpk" }
-      ]
+        { "source": "redpanda", "path": "rpk" },
+      ],
     },
     {
       "id": "qdrant",
@@ -546,8 +565,8 @@
         { "source": "qdrant", "path": "qdrant-deployment-options" },
         { "source": "qdrant", "path": "qdrant-clients-sdk" },
         { "source": "qdrant", "path": "qdrant-monitoring" },
-        { "source": "qdrant", "path": "qdrant-search-quality" }
-      ]
+        { "source": "qdrant", "path": "qdrant-search-quality" },
+      ],
     },
     {
       "id": "windmill",
@@ -559,16 +578,22 @@
         { "source": "windmill", "path": "cli-commands" },
         { "source": "windmill", "path": "write-flow" },
         { "source": "windmill", "path": "write-script-bun" },
-        { "source": "windmill", "path": "preview" }
-      ]
+        { "source": "windmill", "path": "preview" },
+      ],
     },
     {
       "id": "browser",
       "title": "Browser Automation",
       "description": "Browser testing, debugging, profiling, and profile automation.",
       "tags": ["browser", "testing"],
-      "mcps": ["cloakbrowser", "playwright", "chrome.devtools", "firefox.devtools", "adspower-local-api"],
-      "skills": []
+      "mcps": [
+        "cloakbrowser",
+        "playwright",
+        "chrome.devtools",
+        "firefox.devtools",
+        "adspower-local-api",
+      ],
+      "skills": [],
     },
     {
       "id": "security",
@@ -576,7 +601,23 @@
       "description": "Web security, threat intelligence, cloud defense, malware analysis, and reverse engineering.",
       "tags": ["security"],
       "mcps": ["burp.pro", "filescan", "microsoft.defender", "cyble.vision", "wiz", "ida.pro"],
-      "skills": []
+      "skills": [{ "source": "custom", "path": "security-review" }],
+      "rules": ["parallel-agents"],
+      "agents": ["review-team"],
+    },
+    {
+      "id": "architecture",
+      "title": "Software Architecture",
+      "description": "Code graph guidance, architecture agents, and reusable design skills.",
+      "tags": ["architecture", "design"],
+      "mcps": ["codebase-memory"],
+      "skills": [
+        { "source": "custom", "path": "software-architect" },
+        { "source": "custom", "path": "codebase-design" },
+        { "source": "custom", "path": "design-patterns" },
+      ],
+      "rules": ["codebase-memory"],
+      "agents": ["software-architect"],
     },
     {
       "id": "rust",
@@ -584,7 +625,7 @@
       "description": "Rust documentation, packages, Cargo, and code intelligence.",
       "tags": ["rust"],
       "mcps": ["docs.rs", "crates.io", "cargo", "ferroscope"],
-      "skills": []
+      "skills": [],
     },
     {
       "id": "mobile-jvm",
@@ -592,7 +633,7 @@
       "description": "Java, Android, iOS, and Xcode development tooling.",
       "tags": ["android", "ios", "java", "mobile"],
       "mcps": ["javadoc", "xcodebuild", "android"],
-      "skills": []
+      "skills": [],
     },
     {
       "id": "productivity",
@@ -600,7 +641,7 @@
       "description": "Diagrams, time utilities, Jira, and Confluence.",
       "tags": ["documentation", "productivity"],
       "mcps": ["d2", "time", "atlassian"],
-      "skills": []
-    }
-  ]
+      "skills": [],
+    },
+  ],
 }

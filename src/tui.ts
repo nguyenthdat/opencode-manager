@@ -9,9 +9,11 @@ import type {
 } from "@opencode-ai/plugin/tui";
 import type { JSX } from "@opentui/solid";
 import type {
+  AgentStatus,
   ManagerOptions,
   McpStatus,
   ProfileStatus,
+  RuleStatus,
   SkillSourceStatus,
   SkillStatus,
 } from "./manager.js";
@@ -23,17 +25,21 @@ type Parent = () => Promise<void>;
 type Selection =
   | { type: "profile"; profile: ProfileStatus; parent: Parent }
   | { type: "mcp"; mcp: McpStatus; parent: Parent }
-  | { type: "skill"; skill: SkillStatus; parent: Parent };
+  | { type: "skill"; skill: SkillStatus; parent: Parent }
+  | { type: "rule"; rule: RuleStatus; parent: Parent }
+  | { type: "agent"; agent: AgentStatus; parent: Parent };
 
 type DialogValue =
   | { type: "back" }
   | { type: "mcps" }
+  | { type: "rules" }
+  | { type: "agents" }
   | { type: "open-profile"; profile: ProfileStatus }
   | { type: "open-source"; source: SkillSourceStatus }
   | Selection;
 
 function isSelection(value: DialogValue): value is Selection {
-  return value.type === "profile" || value.type === "mcp" || value.type === "skill";
+  return ["profile", "mcp", "skill", "rule", "agent"].includes(value.type);
 }
 
 interface State {
@@ -55,10 +61,12 @@ function errorMessage(error: unknown): string {
 
 function options(state: State): ManagerOptions {
   const mcp = state.api.state.config?.mcp;
+  const agent = state.api.state.config?.agent;
   return {
     projectRoot: state.projectRoot,
     catalogPath: state.catalogPath,
     effectiveMcp: mcp && typeof mcp === "object" && !Array.isArray(mcp) ? mcp : undefined,
+    effectiveAgent: agent && typeof agent === "object" && !Array.isArray(agent) ? agent : undefined,
   };
 }
 
@@ -87,6 +95,15 @@ function mcpFooter(state: State, mcp: McpStatus): string {
 function skillFooter(skill: SkillStatus): string {
   const nested = skill.nestedSkills ? ` · includes ${skill.nestedSkills} nested` : "";
   return `${skill.status}${nested}`;
+}
+
+function ruleFooter(rule: RuleStatus): string {
+  return `${rule.status} · ${rule.ownership}`;
+}
+
+function agentFooter(agent: AgentStatus): string {
+  const members = agent.type === "team" ? ` · ${agent.members} members` : "";
+  return `${agent.status} · ${agent.ownership} · ${agent.type}${members}`;
 }
 
 function sourceFooter(source: SkillSourceStatus): string {
@@ -137,6 +154,18 @@ async function showManager(state: State): Promise<void> {
         description: "Browse and toggle individual project MCP definitions",
         category: "Registries",
       },
+      {
+        title: "Rule Registry",
+        value: { type: "rules" },
+        description: "Install project instructions and keep project config references in sync",
+        category: "Registries",
+      },
+      {
+        title: "Agent Registry",
+        value: { type: "agents" },
+        description: "Install standalone agents or complete agent teams",
+        category: "Registries",
+      },
       ...sources.map((source) => ({
         title: source.title,
         value: { type: "open-source", source } satisfies DialogValue,
@@ -149,7 +178,7 @@ async function showManager(state: State): Promise<void> {
     replaceDialog(state, undefined, () =>
       state.api.ui.DialogSelect<DialogValue>({
         title: "Project Stack Manager",
-        placeholder: "Search profiles, MCPs, or skill registries",
+        placeholder: "Search profiles, MCPs, rules, agents, or skills",
         options: rows,
         onMove() {
           state.selection = undefined;
@@ -160,6 +189,8 @@ async function showManager(state: State): Promise<void> {
         onSelect(option) {
           if (option.value.type === "open-profile") void showProfile(state, option.value.profile.id);
           if (option.value.type === "mcps") void showMcps(state);
+          if (option.value.type === "rules") void showRules(state);
+          if (option.value.type === "agents") void showAgents(state);
           if (option.value.type === "open-source") void showSource(state, option.value.source.id);
         },
       }),
@@ -197,6 +228,20 @@ async function showProfile(state: State, profileID: string): Promise<void> {
         description: `${skill.sourceTitle}: ${skill.description}`,
         footer: skillFooter(skill),
         category: "Skills",
+      })),
+      ...detail.rules.map((rule) => ({
+        title: rule.title,
+        value: { type: "rule", rule, parent } satisfies DialogValue,
+        description: rule.description,
+        footer: ruleFooter(rule),
+        category: "Rules",
+      })),
+      ...detail.agents.map((agent) => ({
+        title: agent.title,
+        value: { type: "agent", agent, parent } satisfies DialogValue,
+        description: agent.description,
+        footer: agentFooter(agent),
+        category: agent.type === "team" ? "Agent Teams" : "Agents",
       })),
     ];
 
@@ -242,6 +287,80 @@ async function showMcps(state: State): Promise<void> {
       state.api.ui.DialogSelect<DialogValue>({
         title: "MCP Registry",
         placeholder: "Search MCPs · Enter/Space toggles",
+        options: rows,
+        onMove(option) {
+          state.selection = isSelection(option.value) ? option.value : undefined;
+        },
+        onFilter() {
+          state.selection = undefined;
+        },
+        onSelect(option) {
+          if (option.value.type === "back") void showManager(state);
+          else if (isSelection(option.value)) confirmToggle(state, option.value);
+        },
+      }),
+    );
+  } catch (error) {
+    state.api.ui.toast({ variant: "error", message: errorMessage(error) });
+  }
+}
+
+async function showRules(state: State): Promise<void> {
+  try {
+    const api = await manager();
+    const rules = await api.listRules(options(state));
+    const parent = () => showRules(state);
+    const rows: TuiDialogSelectOption<DialogValue>[] = [
+      navigation("Back to manager"),
+      ...rules.map((rule) => ({
+        title: rule.title,
+        value: { type: "rule", rule, parent } satisfies DialogValue,
+        description: `${rule.description} [${rule.id}]`,
+        footer: ruleFooter(rule),
+        category: rule.tags[0] ?? "Rules",
+      })),
+    ];
+    replaceDialog(state, undefined, () =>
+      state.api.ui.DialogSelect<DialogValue>({
+        title: "Rule Registry",
+        placeholder: "Search project rules · Enter/Space toggles",
+        options: rows,
+        onMove(option) {
+          state.selection = isSelection(option.value) ? option.value : undefined;
+        },
+        onFilter() {
+          state.selection = undefined;
+        },
+        onSelect(option) {
+          if (option.value.type === "back") void showManager(state);
+          else if (isSelection(option.value)) confirmToggle(state, option.value);
+        },
+      }),
+    );
+  } catch (error) {
+    state.api.ui.toast({ variant: "error", message: errorMessage(error) });
+  }
+}
+
+async function showAgents(state: State): Promise<void> {
+  try {
+    const api = await manager();
+    const agents = await api.listAgents(options(state));
+    const parent = () => showAgents(state);
+    const rows: TuiDialogSelectOption<DialogValue>[] = [
+      navigation("Back to manager"),
+      ...agents.map((agent) => ({
+        title: agent.title,
+        value: { type: "agent", agent, parent } satisfies DialogValue,
+        description: `${agent.description} [${agent.id}]`,
+        footer: agentFooter(agent),
+        category: agent.type === "team" ? "Agent Teams" : agent.tags[0] ?? "Agents",
+      })),
+    ];
+    replaceDialog(state, undefined, () =>
+      state.api.ui.DialogSelect<DialogValue>({
+        title: "Agent Registry",
+        placeholder: "Search standalone agents or teams · Enter/Space toggles",
         options: rows,
         onMove(option) {
           state.selection = isSelection(option.value) ? option.value : undefined;
@@ -310,7 +429,9 @@ async function showSource(state: State, sourceID: string): Promise<void> {
 function selectionEnabled(selection: Selection): boolean {
   if (selection.type === "profile") return selection.profile.status === "enabled";
   if (selection.type === "mcp") return selection.mcp.enabled;
-  if (selection.type === "skill") return selection.skill.status === "managed";
+  if (selection.type === "skill") return selection.skill.status === "managed" || selection.skill.status === "modified";
+  if (selection.type === "rule") return selection.rule.status === "managed" || selection.rule.status === "modified";
+  if (selection.type === "agent") return selection.agent.status === "managed" || selection.agent.status === "modified";
   return false;
 }
 
@@ -318,6 +439,8 @@ function selectionLabel(selection: Selection): string {
   if (selection.type === "profile") return selection.profile.title;
   if (selection.type === "mcp") return selection.mcp.title;
   if (selection.type === "skill") return selection.skill.name;
+  if (selection.type === "rule") return selection.rule.title;
+  if (selection.type === "agent") return selection.agent.title;
   return "resource";
 }
 
@@ -333,7 +456,9 @@ function activeSessionBusy(api: TuiPluginApi): boolean {
 function selectionConflict(selection: Selection): boolean {
   if (selection.type === "profile") return selection.profile.status === "conflict";
   if (selection.type === "mcp") return selection.mcp.status === "conflict";
-  return selection.skill.status === "conflict" || selection.skill.status === "modified";
+  if (selection.type === "skill") return selection.skill.status === "conflict" || selection.skill.status === "modified";
+  if (selection.type === "rule") return selection.rule.status === "conflict" || selection.rule.status === "modified";
+  return selection.agent.status === "conflict" || selection.agent.status === "modified";
 }
 
 function confirmToggle(state: State, selection: Selection, forcedEnabled?: boolean): void {
@@ -346,6 +471,12 @@ function confirmToggle(state: State, selection: Selection, forcedEnabled?: boole
       ? "\n\nThis MCP conflicts with an existing definition and the operation will be refused."
       : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
         ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
+        : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
+          ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
+          : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
+            ? selection.agent.ownership === "inherited"
+              ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
+              : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
         : "";
   const busy = activeSessionBusy(state.api)
     ? "\n\nThe active session is busy and may be interrupted when OpenCode reloads."
@@ -384,8 +515,12 @@ async function applyToggle(state: State, selection: Selection, enabled: boolean,
       await api.setProfileEnabled(options(state), selection.profile.id, enabled, { override });
     } else if (selection.type === "mcp") {
       await api.setMcpEnabled(options(state), selection.mcp.id, enabled, { override });
-    } else {
+    } else if (selection.type === "skill") {
       await api.setSkillEnabled(options(state), selection.skill.source, selection.skill.path, enabled, { override });
+    } else if (selection.type === "rule") {
+      await api.setRuleEnabled(options(state), selection.rule.id, enabled, { override });
+    } else {
+      await api.setAgentEnabled(options(state), selection.agent.id, enabled, { override });
     }
     saved = true;
     state.api.ui.toast({ variant: "info", message: `Reloading project resources for ${label}...` });
@@ -438,7 +573,7 @@ const tui: TuiPlugin = async (api, pluginOptions) => {
       {
         name: "opencode_manager_open",
         title: "Project Stack Manager",
-        desc: "Manage project MCPs, skills, and stack profiles",
+        desc: "Manage project MCPs, rules, agents, skills, and stack profiles",
         category: "Project",
         namespace: "palette",
         slashName: "manager",

@@ -1,11 +1,13 @@
 # Opencode Manager
 
-OpenCode TUI plugin for selecting the MCP servers and agent skills that belong
-to each project. It combines a repository-owned MCP registry, a custom skill
-registry, pinned vendor skill sources, and reusable stack profiles.
+OpenCode TUI plugin for selecting the MCP servers, rules, standalone agents,
+agent teams, and skills that belong to each project. It combines
+repository-owned registries, pinned vendor skill sources, and reusable stack
+profiles.
 
-The manager never writes MCPs or skills to OpenCode's global config. Every
-selection is materialized under the active worktree's `.opencode/` directory.
+The manager never writes resources to OpenCode's global config. Resource files
+are materialized under the active worktree's `.opencode/` directory; project
+config references may be patched in an existing root config as described below.
 
 ## What it manages
 
@@ -15,10 +17,14 @@ selection is materialized under the active worktree's `.opencode/` directory.
   `registry/skills/<name>/SKILL.md`.
 - **Vendor skills:** reproducible, commit-pinned skill repositories from
   Cloudflare, ClickHouse, Redpanda, Qdrant, Windmill, and future vendors.
-- **Profiles:** curated MCP and skill groups for a project stack or scope, such
-  as Cloudflare, ClickHouse, browser automation, security, or Rust.
-- **Individual resources:** every MCP and top-level skill bundle can also be
-  enabled or disabled separately.
+- **Rules:** project instruction files installed under `.opencode/instructions/`
+  and registered in the project config's `instructions` list.
+- **Agents:** standalone `.md` agents and folder-based teams installed under
+  `.opencode/agents/`.
+- **Profiles:** curated groups of MCPs, rules, agents, and skills for a project
+  stack or scope, such as Cloudflare, architecture, security, or Rust.
+- **Individual resources:** every MCP, rule, agent/team, and top-level skill
+  bundle can also be enabled or disabled separately.
 
 ## Project scope
 
@@ -30,16 +36,23 @@ managed files stay under `.opencode/`:
 ```text
 .opencode/
 ├── opencode.jsonc
+├── instructions/
+│   └── <selected-rule>.md
+├── agents/
+│   ├── <standalone-agent>.md
+│   └── <selected-team>/
+│       └── <member>.md
 ├── skills/
 │   └── <selected-skill>/
 └── .opencode-manager/
     ├── .gitignore
     ├── state.json
-    ├── backups/               # preserved overrides and disabled skills
+    ├── backups/               # preserved overrides and disabled resources
     └── cache/                 # ignored vendor Git cache
 ```
 
-Commit `.opencode/opencode.jsonc`, selected `.opencode/skills/`, and
+Commit the selected project config (which may be at the worktree root), selected
+`.opencode/instructions/`, `.opencode/agents/`, `.opencode/skills/`, and
 `.opencode/.opencode-manager/state.json` when the selected stack should be
 shared by the project. The vendor cache and lock files are ignored.
 Local backups are ignored as well because they may contain project-specific
@@ -85,6 +98,8 @@ The first screen contains:
 
 - Stack profiles, with the number of selected resources.
 - The complete MCP registry.
+- The project rule registry.
+- Standalone agents and folder-based agent teams.
 - Custom and vendor skill registries.
 
 Inside a profile or registry:
@@ -93,9 +108,9 @@ Inside a profile or registry:
 - `Ctrl+E` enables it.
 - `Ctrl+D` disables it.
 
-Applying a change reloads the active OpenCode project instance once so MCP and
-skill state is refreshed. If reload fails after files were written, restart
-OpenCode manually.
+Applying a change reloads the active OpenCode project instance once so MCP,
+rule, agent, and skill state is refreshed. If reload fails after files were
+written, restart OpenCode manually.
 
 ## MCP registry
 
@@ -183,6 +198,80 @@ under `.opencode/.opencode-manager/backups/skills/override/`. Disabling a
 manager-owned skill moves it to `backups/skills/disabled/` instead of deleting
 it permanently.
 
+## Rule registry
+
+OpenCode's canonical root rule file is `AGENTS.md`. For independently selectable
+rules, the manager uses OpenCode's additive `instructions` configuration:
+
+```jsonc
+{
+  "rules": {
+    "codebase-memory": {
+      "title": "Codebase Memory First",
+      "description": "Prefer the project code graph for code discovery.",
+      "tags": ["code-intelligence"],
+      "path": "rules/codebase-memory.md"
+    }
+  }
+}
+```
+
+Enabling the rule copies it to `.opencode/instructions/codebase-memory.md` and
+adds the exact relative path to the existing project config's `instructions`
+list. Disabling it removes only that exact entry. Unrelated instructions,
+config keys, and JSONC comments are preserved.
+
+Existing project rule files and manager-owned rules modified after installation
+require confirmation. Replaced and disabled copies are archived under
+`.opencode/.opencode-manager/backups/rules/`.
+
+The bundled rules currently cover code-graph-first discovery and parallel agent
+orchestration.
+
+## Agent registry
+
+An agent entry has one of two types:
+
+```jsonc
+{
+  "agents": {
+    "search": {
+      "type": "single",
+      "title": "Search Researcher",
+      "description": "Returns source-backed research.",
+      "tags": ["research"],
+      "path": "agents/search.md"
+    },
+    "review-team": {
+      "type": "team",
+      "title": "Review Team",
+      "description": "Lead, security, and quality reviewers.",
+      "tags": ["code-review"],
+      "path": "agents/review-team"
+    }
+  }
+}
+```
+
+- `single` installs one file at `.opencode/agents/<id>.md`.
+- `team` installs the complete folder at `.opencode/agents/<id>/`. OpenCode
+  discovers each member recursively with a name such as
+  `<id>/<member-path>`.
+- A team must contain at least two valid `.md` agent definitions. Non-agent
+  files, symlinks, invalid frontmatter, and unsafe paths are rejected.
+- OpenCode subagents do not communicate peer-to-peer. A team that needs
+  orchestration should include a `primary` lead that dispatches members and
+  relays their results without requiring nested subagent depth.
+
+Same-name inherited standalone agents or teams are reported as conflicts before
+a project-local resource shadows them. Project-owned collisions and modified
+manager copies require confirmation and are archived under
+`.opencode/.opencode-manager/backups/agents/`.
+
+The bundled registry currently includes two standalone agents (`search` and
+`software-architect`), a six-member `researcher` team, and a three-member
+`review-team`.
+
 ## Vendor skill registry
 
 Vendor sources live under `skillSources`:
@@ -212,7 +301,8 @@ and displayed as part of that bundle.
 
 ## Profiles
 
-Profiles combine MCP IDs and exact skill source paths:
+Profiles combine MCP IDs, exact skill source paths, rule IDs, and standalone
+agent or team IDs:
 
 ```jsonc
 {
@@ -226,14 +316,16 @@ Profiles combine MCP IDs and exact skill source paths:
       "skills": [
         { "source": "custom", "path": "schema-review" },
         { "source": "clickhouse", "path": "clickhouse-best-practices" }
-      ]
+      ],
+      "rules": ["codebase-memory"],
+      "agents": ["review-team"]
     }
   ]
 }
 ```
 
 Profile actions manage only resources declared by the registry. They never
-disable or remove unrelated MCPs or unmanaged project skills.
+disable or remove unrelated MCPs, rules, agents, or project skills.
 
 ## Safety model
 
@@ -251,6 +343,10 @@ disable or remove unrelated MCPs or unmanaged project skills.
 - Disabled skills are archived, not permanently deleted.
 - Managed skills are updated without confirmation only when their tree digest
   still matches the last installed version.
+- Rule and agent files use the same fingerprint, explicit override, and archive
+  guarantees. Agent teams are fingerprinted and replaced as a complete tree.
+- Rules patch only the exact managed `instructions` entry; agent operations do
+  not modify the project config.
 
 ## Development
 

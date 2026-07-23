@@ -34,6 +34,7 @@ const EMPTY_PROJECT_CONFIG = `{
 `;
 const ID_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const AGENT_PATH_PATTERN = /^[a-z0-9][a-z0-9._-]*(?:\/[a-z0-9][a-z0-9._-]*)*$/;
 const REVISION_PATTERN = /^[a-f0-9]{40}$/;
 const MAX_TREE_FILES = 2_000;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
@@ -48,6 +49,17 @@ export interface McpRegistryEntry {
   description: string;
   tags: string[];
   config: JsonObject;
+}
+
+export interface FileRegistryEntry {
+  title: string;
+  description: string;
+  tags: string[];
+  path: string;
+}
+
+export interface AgentRegistryEntry extends FileRegistryEntry {
+  type: "single" | "team";
 }
 
 export interface LocalSkillSource {
@@ -81,12 +93,16 @@ export interface RegistryProfile {
   tags: string[];
   mcps: string[];
   skills: ProfileSkillRef[];
+  rules: string[];
+  agents: string[];
 }
 
 export interface RegistryCatalog {
   version: 1;
   mcps: Record<string, McpRegistryEntry>;
   skillSources: Record<string, SkillSource>;
+  rules: Record<string, FileRegistryEntry>;
+  agents: Record<string, AgentRegistryEntry>;
   profiles: RegistryProfile[];
 }
 
@@ -99,6 +115,7 @@ export interface ManagerOptions {
   projectRoot: string;
   catalogPath?: string;
   effectiveMcp?: Record<string, unknown>;
+  effectiveAgent?: Record<string, unknown>;
 }
 
 export interface MutationOptions {
@@ -140,6 +157,19 @@ export interface SkillSourceStatus {
   installed: number;
 }
 
+export interface RuleStatus extends FileRegistryEntry {
+  id: string;
+  status: ResourceStatus;
+  ownership: "manager" | "project" | "absent";
+}
+
+export interface AgentStatus extends AgentRegistryEntry {
+  id: string;
+  members: number;
+  status: ResourceStatus;
+  ownership: "manager" | "project" | "inherited" | "absent";
+}
+
 export interface ProfileStatus extends RegistryProfile {
   status: "enabled" | "disabled" | "partial" | "conflict";
   enabledResources: number;
@@ -150,6 +180,8 @@ export interface ProfileDetail {
   profile: ProfileStatus;
   mcps: McpStatus[];
   skills: SkillStatus[];
+  rules: RuleStatus[];
+  agents: AgentStatus[];
 }
 
 interface ManagedMcpState {
@@ -164,10 +196,22 @@ interface ManagedSkillState {
   digest: string;
 }
 
+interface ManagedRuleState extends FileRegistryEntry {
+  digest: string;
+  configFile: string;
+}
+
+interface ManagedAgentState extends AgentRegistryEntry {
+  digest: string;
+  members: number;
+}
+
 interface ManagerState {
   version: 1;
   mcps: Record<string, ManagedMcpState>;
   skills: Record<string, ManagedSkillState>;
+  rules: Record<string, ManagedRuleState>;
+  agents: Record<string, ManagedAgentState>;
 }
 
 interface ProjectContext {
@@ -178,11 +222,14 @@ interface ProjectContext {
   backupDir: string;
   cacheDir: string;
   skillsDir: string;
+  instructionsDir: string;
+  agentsDir: string;
   stateFile: string;
   lockFile: string;
 }
 
 interface ProjectConfig {
+  file: string;
   source: string;
   value: JsonObject;
   mode?: number;
@@ -199,8 +246,17 @@ type TreeInspection =
   | { kind: "unsupported" }
   | { kind: "directory"; digest: string };
 
+type FileInspection =
+  | { kind: "absent" }
+  | { kind: "unsupported" }
+  | { kind: "file"; digest: string };
+
 function isObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function own<T>(record: Record<string, T>, key: string): T | undefined {
+  return Object.hasOwn(record, key) ? record[key] : undefined;
 }
 
 function text(value: unknown, label: string): string {
@@ -317,6 +373,35 @@ function validateRepository(value: unknown, id: string): string {
   return repository;
 }
 
+function validateFileRegistry(value: unknown, label: "rule" | "agent"): Record<string, FileRegistryEntry> {
+  if (!isObject(value)) throw new Error(`[opencode-manager] Registry ${label}s must be an object`);
+  const entries: Record<string, FileRegistryEntry> = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid ${label} id "${id}"`);
+    entries[id] = {
+      title: text(raw.title, `${label} "${id}" title`),
+      description: text(raw.description, `${label} "${id}" description`),
+      tags: stringList(raw.tags ?? [], `${label} "${id}" tags`),
+      path: safeRelativePath(raw.path, `${label} "${id}" path`),
+    };
+  }
+  return entries;
+}
+
+function validateAgentRegistry(value: unknown): Record<string, AgentRegistryEntry> {
+  const base = validateFileRegistry(value, "agent");
+  const rawEntries = value as JsonObject;
+  const entries: Record<string, AgentRegistryEntry> = {};
+  for (const [id, entry] of Object.entries(base)) {
+    const type = (rawEntries[id] as JsonObject).type;
+    if (type !== "single" && type !== "team") {
+      throw new Error(`[opencode-manager] Agent "${id}" type must be single or team`);
+    }
+    entries[id] = { ...entry, type };
+  }
+  return entries;
+}
+
 export async function loadCatalog(options: Pick<ManagerOptions, "catalogPath"> = {}): Promise<RegistryCatalog> {
   return loadCatalogInternal(options);
 }
@@ -372,6 +457,9 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     throw new Error(`[opencode-manager] Skill source "${id}" type must be local or git`);
   }
 
+  const rules = validateFileRegistry(value.rules ?? {}, "rule");
+  const agents = validateAgentRegistry(value.agents ?? {});
+
   const profiles: RegistryProfile[] = [];
   const profileIDs = new Set<string>();
   for (const raw of value.profiles) {
@@ -390,6 +478,14 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
       if (!skillSources[source]) throw new Error(`[opencode-manager] Profile "${id}" references unknown skill source "${source}"`);
       return { source, path: safeRelativePath(item.path, `profile "${id}" skill path`) };
     });
+    const profileRules = stringList(raw.rules ?? [], `profile "${id}" rules`);
+    for (const rule of profileRules) {
+      if (!own(rules, rule)) throw new Error(`[opencode-manager] Profile "${id}" references unknown rule "${rule}"`);
+    }
+    const profileAgents = stringList(raw.agents ?? [], `profile "${id}" agents`);
+    for (const agent of profileAgents) {
+      if (!own(agents, agent)) throw new Error(`[opencode-manager] Profile "${id}" references unknown agent "${agent}"`);
+    }
     profiles.push({
       id,
       title: text(raw.title, `profile "${id}" title`),
@@ -397,10 +493,12 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
       tags: stringList(raw.tags ?? [], `profile "${id}" tags`),
       mcps: profileMcps,
       skills,
+      rules: profileRules,
+      agents: profileAgents,
     });
   }
 
-  return { version: 1, file, root: dirname(file), mcps, skillSources, profiles };
+  return { version: 1, file, root: dirname(file), mcps, skillSources, rules, agents, profiles };
 }
 
 function isWithin(target: string, root: string): boolean {
@@ -426,7 +524,14 @@ async function projectContext(projectRoot: string): Promise<ProjectContext> {
   }
   const managerDir = await canonicalDirectory(join(configDir, ".opencode-manager"));
   const skillsDir = await canonicalDirectory(join(configDir, "skills"));
-  if (!isWithin(managerDir, configDir) || !isWithin(skillsDir, configDir)) {
+  const instructionsDir = await canonicalDirectory(join(configDir, "instructions"));
+  const agentsDir = await canonicalDirectory(join(configDir, "agents"));
+  if (
+    !isWithin(managerDir, configDir) ||
+    !isWithin(skillsDir, configDir) ||
+    !isWithin(instructionsDir, configDir) ||
+    !isWithin(agentsDir, configDir)
+  ) {
     throw new Error("[opencode-manager] Managed project paths must stay inside .opencode");
   }
   const candidates = [
@@ -438,8 +543,12 @@ async function projectContext(projectRoot: string): Promise<ProjectContext> {
   let configFile = candidates[0]!;
   for (const candidate of candidates) {
     try {
+      const info = await lstat(candidate);
+      if (info.isSymbolicLink() || !info.isFile()) {
+        throw new Error(`[opencode-manager] Project config must be a regular non-symlink file: ${candidate}`);
+      }
       const canonical = await realpath(candidate);
-      if (!isWithin(canonical, root)) {
+      if (canonical !== resolve(candidate) || !isWithin(canonical, root)) {
         throw new Error(`[opencode-manager] Project config escapes project root: ${candidate}`);
       }
       configFile = canonical;
@@ -456,6 +565,8 @@ async function projectContext(projectRoot: string): Promise<ProjectContext> {
     backupDir: join(managerDir, "backups"),
     cacheDir: join(managerDir, "cache"),
     skillsDir,
+    instructionsDir,
+    agentsDir,
     stateFile: join(managerDir, "state.json"),
     lockFile: join(managerDir, "manager.lock"),
   };
@@ -471,7 +582,7 @@ async function ensureContainedDirectory(path: string, parent: string, label: str
 }
 
 function emptyState(): ManagerState {
-  return { version: 1, mcps: {}, skills: {} };
+  return { version: 1, mcps: {}, skills: {}, rules: {}, agents: {} };
 }
 
 async function readState(context: ProjectContext): Promise<ManagerState> {
@@ -486,7 +597,77 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
   if (!isObject(value) || value.version !== 1 || !isObject(value.mcps) || !isObject(value.skills)) {
     throw new Error(`[opencode-manager] Invalid manager state in ${context.stateFile}`);
   }
-  return value as unknown as ManagerState;
+  if (value.rules !== undefined && !isObject(value.rules)) {
+    throw new Error(`[opencode-manager] Invalid manager rule state in ${context.stateFile}`);
+  }
+  if (value.agents !== undefined && !isObject(value.agents)) {
+    throw new Error(`[opencode-manager] Invalid manager agent state in ${context.stateFile}`);
+  }
+  const rules: Record<string, ManagedRuleState> = {};
+  for (const [id, raw] of Object.entries((value.rules ?? {}) as JsonObject)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed rule state "${id}"`);
+    rules[id] = {
+      title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
+      description: typeof raw.description === "string" && raw.description.trim()
+        ? raw.description
+        : `Managed rule ${id}`,
+      tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed rule "${id}" tags`),
+      path: raw.path === undefined ? `rules/${id}.md` : safeRelativePath(raw.path, `managed rule "${id}" path`),
+      digest: text(raw.digest, `managed rule "${id}" digest`),
+      configFile: raw.configFile === undefined
+        ? await inferLegacyRuleConfigFile(context, id)
+        : safeRelativePath(raw.configFile, `managed rule "${id}" configFile`),
+    };
+  }
+  const agents: Record<string, ManagedAgentState> = {};
+  for (const [id, raw] of Object.entries((value.agents ?? {}) as JsonObject)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed agent state "${id}"`);
+    const digest = text(raw.digest, `managed agent "${id}" digest`);
+    let type: AgentRegistryEntry["type"];
+    if (raw.type === "single" || raw.type === "team") {
+      type = raw.type;
+    } else {
+      const [single, team] = await Promise.all([
+        inspectFile(agentDestination(context, id, "single")),
+        inspectTree(agentDestination(context, id, "team"), `Managed agent team "${id}"`),
+      ]);
+      const matches = [
+        single.kind === "file" && single.digest === digest ? "single" : undefined,
+        team.kind === "directory" && team.digest === digest ? "team" : undefined,
+      ].filter((item): item is AgentRegistryEntry["type"] => item !== undefined);
+      if (matches.length === 1) type = matches[0]!;
+      else if (single.kind === "absent" && team.kind === "absent") type = "single";
+      else throw new Error(`[opencode-manager] Cannot safely infer legacy managed agent "${id}" type from its digest`);
+    }
+    let members = Number.isInteger(raw.members) && (raw.members as number) > 0 ? raw.members as number : 1;
+    if (raw.members === undefined && type === "team") {
+      const destination = agentDestination(context, id, "team");
+      const inspection = await inspectTree(destination, `Managed agent team "${id}"`);
+      if (inspection.kind === "directory") {
+        members = (await collectTree(destination, `Managed agent team "${id}"`)).filter((item) => item.content).length;
+      }
+    }
+    agents[id] = {
+      type,
+      title: typeof raw.title === "string" && raw.title.trim() ? raw.title : id,
+      description: typeof raw.description === "string" && raw.description.trim()
+        ? raw.description
+        : `Managed agent ${id}`,
+      tags: raw.tags === undefined ? [] : stringList(raw.tags, `managed agent "${id}" tags`),
+      path: raw.path === undefined
+        ? `agents/${id}${type === "single" ? ".md" : ""}`
+        : safeRelativePath(raw.path, `managed agent "${id}" path`),
+      digest,
+      members,
+    };
+  }
+  return {
+    version: 1,
+    mcps: value.mcps as Record<string, ManagedMcpState>,
+    skills: value.skills as Record<string, ManagedSkillState>,
+    rules,
+    agents,
+  };
 }
 
 async function writeAtomic(file: string, source: string, mode?: number): Promise<void> {
@@ -573,15 +754,75 @@ async function withProjectLock<T>(context: ProjectContext, fn: () => Promise<T>)
   }
 }
 
-async function readProjectConfig(context: ProjectContext): Promise<ProjectConfig> {
+async function readConfigFile(file: string): Promise<ProjectConfig> {
   try {
-    const [source, info] = await Promise.all([readFile(context.configFile, "utf8"), stat(context.configFile)]);
+    const [source, info] = await Promise.all([readFile(file, "utf8"), stat(file)]);
     const normalized = source.trim() === "" ? EMPTY_PROJECT_CONFIG : source;
-    return { source: normalized, value: parseJsonc(context.configFile, normalized), mode: info.mode & 0o777 };
+    return { file, source: normalized, value: parseJsonc(file, normalized), mode: info.mode & 0o777 };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return { source: EMPTY_PROJECT_CONFIG, value: parseJsonc(context.configFile, EMPTY_PROJECT_CONFIG) };
+    return { file, source: EMPTY_PROJECT_CONFIG, value: parseJsonc(file, EMPTY_PROJECT_CONFIG) };
   }
+}
+
+async function readProjectConfig(context: ProjectContext): Promise<ProjectConfig> {
+  return readConfigFile(context.configFile);
+}
+
+function statePath(root: string, file: string): string {
+  const path = relative(root, file).split(sep).join("/");
+  if (path === "" || path === ".." || path.startsWith("../")) {
+    throw new Error(`[opencode-manager] Managed state path escapes project root: ${file}`);
+  }
+  return path;
+}
+
+async function resolveRuleConfigFile(context: ProjectContext, path: string, label: string): Promise<string> {
+  const normalized = safeRelativePath(path, label);
+  const file = resolve(context.root, normalized);
+  if (!isWithin(file, context.root)) throw new Error(`[opencode-manager] ${label} escapes project root`);
+  const supported = new Set([
+    join(context.configDir, "opencode.jsonc"),
+    join(context.configDir, "opencode.json"),
+    join(context.root, "opencode.jsonc"),
+    join(context.root, "opencode.json"),
+  ].map((candidate) => resolve(candidate)));
+  if (!supported.has(file)) throw new Error(`[opencode-manager] ${label} is not a supported OpenCode project config`);
+  const parent = dirname(file);
+  const canonicalParent = await realpath(parent);
+  if (canonicalParent !== parent || !isWithin(canonicalParent, context.root)) {
+    throw new Error(`[opencode-manager] ${label} parent changed or escapes project root`);
+  }
+  try {
+    const info = await lstat(file);
+    if (info.isSymbolicLink() || !info.isFile() || await realpath(file) !== file) {
+      throw new Error(`[opencode-manager] ${label} changed or is not a regular project config`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+  }
+  return file;
+}
+
+async function inferLegacyRuleConfigFile(context: ProjectContext, id: string): Promise<string> {
+  const candidates = [
+    join(context.configDir, "opencode.jsonc"),
+    join(context.configDir, "opencode.json"),
+    join(context.root, "opencode.jsonc"),
+    join(context.root, "opencode.json"),
+  ];
+  const instruction = ruleInstruction(id);
+  const matches: string[] = [];
+  for (const candidate of candidates) {
+    const path = statePath(context.root, candidate);
+    const file = await resolveRuleConfigFile(context, path, `legacy rule "${id}" configFile`);
+    const config = await readConfigFile(file);
+    if (projectInstructions(config).includes(instruction)) matches.push(path);
+  }
+  if (matches.length > 1) {
+    throw new Error(`[opencode-manager] Legacy managed rule "${id}" instruction exists in multiple project configs`);
+  }
+  return matches[0] ?? statePath(context.root, context.configFile);
 }
 
 function stableJson(value: unknown): string {
@@ -906,7 +1147,7 @@ async function skillSourceRoot(catalog: LoadedCatalog, context: ProjectContext, 
   return skillsRoot;
 }
 
-async function collectTree(root: string): Promise<TreeEntry[]> {
+async function collectTree(root: string, label = "Skill tree"): Promise<TreeEntry[]> {
   const entries: TreeEntry[] = [];
   let bytes = 0;
   async function visit(directory: string, prefix: string): Promise<void> {
@@ -915,20 +1156,20 @@ async function collectTree(root: string): Promise<TreeEntry[]> {
       const absolute = join(directory, name);
       const path = prefix ? `${prefix}/${name}` : name;
       const info = await lstat(absolute);
-      if (info.isSymbolicLink()) throw new Error(`[opencode-manager] Skill tree contains symlink "${path}"`);
+      if (info.isSymbolicLink()) throw new Error(`[opencode-manager] ${label} contains symlink "${path}"`);
       if (info.isDirectory()) {
         entries.push({ path: `${path}/`, mode: info.mode & 0o777 });
-        if (entries.length > MAX_TREE_FILES) throw new Error("[opencode-manager] Skill tree has too many entries");
+         if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
         await visit(absolute, path);
         continue;
       }
-      if (!info.isFile()) throw new Error(`[opencode-manager] Skill tree contains unsupported entry "${path}"`);
-      if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] Skill file "${path}" is too large`);
+       if (!info.isFile()) throw new Error(`[opencode-manager] ${label} contains unsupported entry "${path}"`);
+       if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] ${label} file "${path}" is too large`);
       bytes += info.size;
-      if (bytes > MAX_TREE_BYTES) throw new Error("[opencode-manager] Skill tree is too large");
+       if (bytes > MAX_TREE_BYTES) throw new Error(`[opencode-manager] ${label} is too large`);
       const content = await readFile(absolute);
       entries.push({ path, mode: info.mode & 0o777, content });
-      if (entries.length > MAX_TREE_FILES) throw new Error("[opencode-manager] Skill tree has too many entries");
+       if (entries.length > MAX_TREE_FILES) throw new Error(`[opencode-manager] ${label} has too many entries`);
     }
   }
   await visit(root, "");
@@ -948,7 +1189,7 @@ function digestEntries(entries: TreeEntry[]): string {
   return digest.digest("hex");
 }
 
-async function inspectTree(path: string): Promise<TreeInspection> {
+async function inspectTree(path: string, label = "Skill tree"): Promise<TreeInspection> {
   try {
     const info = await lstat(path);
     if (info.isSymbolicLink() || !info.isDirectory()) return { kind: "unsupported" };
@@ -956,7 +1197,149 @@ async function inspectTree(path: string): Promise<TreeInspection> {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
     throw error;
   }
-  return { kind: "directory", digest: digestEntries(await collectTree(path)) };
+  return { kind: "directory", digest: digestEntries(await collectTree(path, label)) };
+}
+
+async function inspectFile(path: string): Promise<FileInspection> {
+  try {
+    const info = await lstat(path);
+    if (info.isSymbolicLink() || !info.isFile()) return { kind: "unsupported" };
+    if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] Managed file "${path}" is too large`);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { kind: "absent" };
+    throw error;
+  }
+  return { kind: "file", digest: hash(await readFile(path)) };
+}
+
+function parseMarkdownFrontmatter(file: string, source: string): { data: JsonObject; content: string } {
+  const lines = source.split(/\r?\n/);
+  if (lines[0]?.trim() !== "---") throw new Error(`[opencode-manager] Agent ${file} has no YAML frontmatter`);
+  const end = lines.findIndex((line, index) => index > 0 && line.trim() === "---");
+  if (end < 0) throw new Error(`[opencode-manager] Agent ${file} has unterminated YAML frontmatter`);
+  const data = parseYaml(lines.slice(1, end).join("\n")) as unknown;
+  if (!isObject(data)) throw new Error(`[opencode-manager] Agent ${file} frontmatter must be an object`);
+  return { data, content: lines.slice(end + 1).join("\n").trim() };
+}
+
+function validateAgentDocument(file: string, source: string, expectedName: string): void {
+  const { data, content } = parseMarkdownFrontmatter(file, source);
+  text(data.description, `agent ${file} description`);
+  if (data.name !== undefined && data.name !== expectedName) {
+    throw new Error(`[opencode-manager] Agent ${file} name must match "${expectedName}"`);
+  }
+  if (data.mode !== undefined && !["subagent", "primary", "all"].includes(String(data.mode))) {
+    throw new Error(`[opencode-manager] Agent ${file} has invalid mode`);
+  }
+  for (const field of ["model", "variant", "prompt"] as const) {
+    if (data[field] !== undefined && typeof data[field] !== "string") {
+      throw new Error(`[opencode-manager] Agent ${file} ${field} must be a string`);
+    }
+  }
+  for (const field of ["temperature", "top_p"] as const) {
+    if (data[field] !== undefined && (typeof data[field] !== "number" || !Number.isFinite(data[field]))) {
+      throw new Error(`[opencode-manager] Agent ${file} ${field} must be a finite number`);
+    }
+  }
+  for (const field of ["steps", "maxSteps"] as const) {
+    if (data[field] !== undefined && (!Number.isInteger(data[field]) || (data[field] as number) <= 0)) {
+      throw new Error(`[opencode-manager] Agent ${file} ${field} must be a positive integer`);
+    }
+  }
+  for (const field of ["disable", "hidden"] as const) {
+    if (data[field] !== undefined && typeof data[field] !== "boolean") {
+      throw new Error(`[opencode-manager] Agent ${file} ${field} must be boolean`);
+    }
+  }
+  if (data.color !== undefined && (
+    typeof data.color !== "string" ||
+    !/^#[0-9a-fA-F]{6}$/.test(data.color) &&
+    !["primary", "secondary", "accent", "success", "warning", "error", "info"].includes(data.color)
+  )) {
+    throw new Error(`[opencode-manager] Agent ${file} has invalid color`);
+  }
+  if (data.tools !== undefined && (
+    !isObject(data.tools) || Object.values(data.tools).some((value) => typeof value !== "boolean")
+  )) {
+    throw new Error(`[opencode-manager] Agent ${file} tools must contain boolean values`);
+  }
+  if (data.options !== undefined && !isObject(data.options)) {
+    throw new Error(`[opencode-manager] Agent ${file} options must be an object`);
+  }
+  if (data.permission !== undefined) validateAgentPermissions(file, data.permission);
+  if (content === "") throw new Error(`[opencode-manager] Agent ${file} prompt must not be empty`);
+}
+
+function validateAgentPermissions(file: string, value: unknown): void {
+  const decisions = new Set(["allow", "ask", "deny"]);
+  if (typeof value === "string" && decisions.has(value)) return;
+  if (!isObject(value)) throw new Error(`[opencode-manager] Agent ${file} permission must be an action or object`);
+  const actionOnly = new Set(["todowrite", "question", "webfetch", "websearch", "doom_loop"]);
+  for (const [tool, permission] of Object.entries(value)) {
+    if (typeof permission === "string" && decisions.has(permission)) continue;
+    if (
+      !actionOnly.has(tool) &&
+      isObject(permission) &&
+      Object.values(permission).every((decision) => typeof decision === "string" && decisions.has(decision))
+    ) {
+      continue;
+    }
+    throw new Error(`[opencode-manager] Agent ${file} permission for "${tool}" is invalid`);
+  }
+}
+
+async function registryFile(catalog: LoadedCatalog, entry: FileRegistryEntry, label: string): Promise<Buffer> {
+  const catalogRoot = await realpath(catalog.root);
+  const requested = resolve(catalogRoot, entry.path);
+  if (!isWithin(requested, catalogRoot)) throw new Error(`[opencode-manager] ${label} source escapes the registry root`);
+  const info = await lstat(requested);
+  if (info.isSymbolicLink() || !info.isFile()) throw new Error(`[opencode-manager] ${label} source must be a regular file`);
+  const file = await realpath(requested);
+  if (!isWithin(file, catalogRoot)) throw new Error(`[opencode-manager] ${label} source escapes the registry root`);
+  if (info.size > MAX_FILE_BYTES) throw new Error(`[opencode-manager] ${label} source is too large`);
+  const content = await readFile(file);
+  if (content.toString("utf8").trim() === "") throw new Error(`[opencode-manager] ${label} source must not be empty`);
+  return content;
+}
+
+interface AgentBundle {
+  digest: string;
+  members: number;
+  content?: Buffer;
+  entries?: TreeEntry[];
+}
+
+async function agentBundle(catalog: LoadedCatalog, id: string, entry: AgentRegistryEntry): Promise<AgentBundle> {
+  if (entry.type === "single") {
+    const content = await registryFile(catalog, entry, `Agent "${id}"`);
+    validateAgentDocument(entry.path, content.toString("utf8"), id);
+    return { content, digest: hash(content), members: 1 };
+  }
+
+  const catalogRoot = await realpath(catalog.root);
+  const requested = resolve(catalogRoot, entry.path);
+  if (!isWithin(requested, catalogRoot)) throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
+  const info = await lstat(requested);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`[opencode-manager] Agent team "${id}" source must be a directory`);
+  }
+  const root = await realpath(requested);
+  if (!isWithin(root, catalogRoot)) throw new Error(`[opencode-manager] Agent team "${id}" source escapes the registry root`);
+  const entries = await collectTree(root, `Agent team "${id}"`);
+  const files = entries.filter((item) => item.content !== undefined);
+  if (files.length < 2) throw new Error(`[opencode-manager] Agent team "${id}" must contain at least two agents`);
+  for (const item of files) {
+    if (!item.path.endsWith(".md")) {
+      throw new Error(`[opencode-manager] Agent team "${id}" contains non-agent file "${item.path}"`);
+    }
+    const member = item.path.slice(0, -3);
+    const expectedName = `${id}/${member}`;
+    if (!AGENT_PATH_PATTERN.test(expectedName)) {
+      throw new Error(`[opencode-manager] Agent team "${id}" has invalid member path "${item.path}"`);
+    }
+    validateAgentDocument(item.path, item.content!.toString("utf8"), expectedName);
+  }
+  return { entries, digest: digestEntries(entries), members: files.length };
 }
 
 async function copyEntries(entries: TreeEntry[], destination: string): Promise<void> {
@@ -1124,6 +1507,54 @@ async function replaceSkillTree(
   }
 }
 
+async function replaceManagedFile(content: Buffer, destination: string, preservedPrevious?: string): Promise<void> {
+  const temporary = `${destination}.${process.pid}.${randomUUID()}.tmp`;
+  const previous = `${destination}.${process.pid}.${randomUUID()}.old`;
+  await mkdir(dirname(destination), { recursive: true });
+  try {
+    await writeFile(temporary, content, { mode: 0o644 });
+    const previousTarget = preservedPrevious ?? previous;
+    let movedPrevious = false;
+    try {
+      await rename(destination, previousTarget);
+      movedPrevious = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      await rename(temporary, destination);
+    } catch (error) {
+      if (movedPrevious) await rename(previousTarget, destination).catch(() => undefined);
+      throw error;
+    }
+    if (movedPrevious && !preservedPrevious) await rm(previous, { force: true });
+  } finally {
+    await rm(temporary, { force: true }).catch(() => undefined);
+    await rm(previous, { force: true }).catch(() => undefined);
+  }
+}
+
+async function managedArchivePath(
+  context: ProjectContext,
+  kind: "rules" | "agents",
+  id: string,
+  reason: "override" | "disabled",
+  directory: boolean,
+): Promise<string> {
+  const backupRoot = await ensureContainedDirectory(context.backupDir, context.managerDir, "backup");
+  const resourceRoot = await ensureContainedDirectory(join(backupRoot, kind), backupRoot, `${kind} backup`);
+  const reasonRoot = await ensureContainedDirectory(join(resourceRoot, reason), resourceRoot, `${reason} ${kind} backup`);
+  return join(reasonRoot, `${id}-${Date.now()}-${randomUUID()}${directory ? "" : ".md"}`);
+}
+
+async function ensureProjectResourceDirectory(context: ProjectContext, directory: string, label: string): Promise<void> {
+  await mkdir(directory, { recursive: true });
+  const canonical = await realpath(directory);
+  if (canonical !== directory || !isWithin(canonical, context.configDir)) {
+    throw new Error(`[opencode-manager] Project ${label} directory changed or escapes .opencode`);
+  }
+}
+
 export async function setSkillEnabled(
   options: ManagerOptions,
   sourceID: string,
@@ -1214,42 +1645,412 @@ export async function setSkillEnabled(
   return updated;
 }
 
-function profileState(profile: RegistryProfile, mcps: McpStatus[], state: ManagerState): ProfileStatus["status"] {
+function ruleInstruction(id: string): string {
+  return `.opencode/instructions/${id}.md`;
+}
+
+function projectInstructions(config: ProjectConfig): string[] {
+  return config.value.instructions === undefined
+    ? []
+    : stringList(config.value.instructions, `project config "instructions"`);
+}
+
+function updateProjectInstruction(config: ProjectConfig, instruction: string, enabled: boolean): string {
+  const current = projectInstructions(config);
+  const formattingOptions = { insertSpaces: true, tabSize: 2 };
+  if (enabled) {
+    if (current.includes(instruction)) return config.source;
+    const path = config.value.instructions === undefined ? ["instructions"] : ["instructions", -1];
+    const value = config.value.instructions === undefined ? [instruction] : instruction;
+    return applyEdits(config.source, modify(config.source, path, value, { formattingOptions }));
+  }
+  let source = config.source;
+  for (let index = current.length - 1; index >= 0; index -= 1) {
+    if (current[index] !== instruction) continue;
+    source = applyEdits(source, modify(source, ["instructions", index], undefined, { formattingOptions }));
+  }
+  return source;
+}
+
+export async function listRules(options: ManagerOptions): Promise<RuleStatus[]> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  const [selectedConfig, state] = await Promise.all([readProjectConfig(context), readState(context)]);
+  const ids = [...new Set([...Object.keys(catalog.rules), ...Object.keys(state.rules)])];
+  return Promise.all(
+    ids.map(async (id) => {
+      const registryEntry = own(catalog.rules, id);
+      const managed = own(state.rules, id);
+      const entry = registryEntry ?? managed;
+      if (!entry) throw new Error(`[opencode-manager] Rule "${id}" has no registry or state metadata`);
+      let sourceValid = true;
+      if (registryEntry) {
+        try {
+          await registryFile(catalog, registryEntry, `Rule "${id}"`);
+        } catch (error) {
+          if (!managed) throw error;
+          sourceValid = false;
+        }
+      }
+      const config = managed?.configFile
+        ? await readConfigFile(await resolveRuleConfigFile(context, managed.configFile, `rule "${id}" configFile`))
+        : selectedConfig;
+      const instructions = projectInstructions(config);
+      const destination = join(context.instructionsDir, `${id}.md`);
+      const current = await inspectFile(destination);
+      let status: ResourceStatus;
+      if (managed) {
+        status = sourceValid && current.kind === "file" && current.digest === managed.digest && instructions.includes(ruleInstruction(id))
+          ? "managed"
+          : "modified";
+      } else {
+        status = current.kind === "absent" ? "absent" : "conflict";
+      }
+      return {
+        id,
+        title: entry.title,
+        description: entry.description,
+        tags: entry.tags,
+        path: entry.path,
+        status,
+        ownership: managed ? "manager" : current.kind === "absent" ? "absent" : "project",
+      };
+    }),
+  );
+}
+
+export async function setRuleEnabled(
+  options: ManagerOptions,
+  id: string,
+  enabled: boolean,
+  mutation: MutationOptions = {},
+): Promise<RuleStatus> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  const destination = join(context.instructionsDir, `${id}.md`);
+  const instruction = ruleInstruction(id);
+  let resultEntry: FileRegistryEntry | undefined;
+
+  await withProjectLock(context, async () => {
+    const state = await readState(context);
+    const registryEntry = own(catalog.rules, id);
+    const managed = own(state.rules, id);
+    const entry = registryEntry ?? managed;
+    if (!entry) throw new Error(`[opencode-manager] Unknown rule "${id}"`);
+    resultEntry = entry;
+    const config = managed?.configFile
+      ? await readConfigFile(await resolveRuleConfigFile(context, managed.configFile, `rule "${id}" configFile`))
+      : await readProjectConfig(context);
+    const current = await inspectFile(destination);
+    const instructionPresent = projectInstructions(config).includes(instruction);
+
+    if (enabled) {
+      if (!registryEntry) throw new Error(`[opencode-manager] Rule "${id}" is no longer available in the registry`);
+      const content = await registryFile(catalog, registryEntry, `Rule "${id}"`);
+      const digest = hash(content);
+      if (current.kind === "unsupported") {
+        throw new Error(`[opencode-manager] Rule destination "${id}" is a directory or symlink`);
+      }
+      const conflict = (current.kind === "file" && !managed) ||
+        (managed && (current.kind !== "file" || current.digest !== managed.digest || !instructionPresent));
+      if (conflict && !mutation.override) {
+        const reason = managed ? "was modified after manager installation" : "already exists and is unmanaged";
+        throw new Error(`[opencode-manager] Rule "${id}" ${reason}; confirm override to preserve and replace it`);
+      }
+      await ensureProjectResourceDirectory(context, context.instructionsDir, "instructions");
+      const preserve = conflict && current.kind === "file"
+        ? await managedArchivePath(context, "rules", id, "override", false)
+        : undefined;
+      if (conflict || current.kind !== "file" || current.digest !== digest) {
+        await replaceManagedFile(content, destination, preserve);
+      }
+      const nextSource = updateProjectInstruction(config, instruction, true);
+      if (nextSource !== config.source) await writeAtomic(config.file, nextSource, config.mode);
+      state.rules[id] = {
+        ...registryEntry,
+        digest,
+        configFile: statePath(context.root, config.file),
+      };
+      await writeState(context, state);
+      return;
+    }
+
+    if (!managed) {
+      if (current.kind !== "absent") throw new Error(`[opencode-manager] Refusing to disable unmanaged rule "${id}"`);
+      return;
+    }
+    if (current.kind === "unsupported") {
+      throw new Error(`[opencode-manager] Managed rule destination "${id}" became a directory or symlink`);
+    }
+    if (current.kind === "absent" && !mutation.override) {
+      throw new Error(`[opencode-manager] Managed rule "${id}" is missing`);
+    }
+    if (current.kind === "file" && current.digest !== managed.digest && !mutation.override) {
+      throw new Error(`[opencode-manager] Refusing to disable modified rule "${id}" without confirmation`);
+    }
+    if (!instructionPresent && !mutation.override) {
+      throw new Error(`[opencode-manager] Refusing to disable rule "${id}" after its instruction reference was modified`);
+    }
+    if (current.kind === "file") {
+      const archive = await managedArchivePath(context, "rules", id, "disabled", false);
+      await rename(destination, archive);
+    }
+    const nextSource = updateProjectInstruction(config, instruction, false);
+    if (nextSource !== config.source) await writeAtomic(config.file, nextSource, config.mode);
+    delete state.rules[id];
+    await writeState(context, state);
+  });
+
+  if (!enabled && resultEntry) return { id, ...resultEntry, status: "absent", ownership: "absent" };
+  const updated = (await listRules(options)).find((item) => item.id === id);
+  if (!updated) throw new Error(`[opencode-manager] Rule "${id}" disappeared from the registry`);
+  return updated;
+}
+
+function inheritedAgent(options: ManagerOptions, id: string, type: AgentRegistryEntry["type"]): boolean {
+  if (type === "single") return options.effectiveAgent?.[id] !== undefined;
+  return Object.keys(options.effectiveAgent ?? {}).some((name) => name.startsWith(`${id}/`));
+}
+
+function agentDestination(context: ProjectContext, id: string, type: AgentRegistryEntry["type"]): string {
+  return join(context.agentsDir, type === "single" ? `${id}.md` : id);
+}
+
+export async function listAgents(options: ManagerOptions): Promise<AgentStatus[]> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  const state = await readState(context);
+  const ids = [...new Set([...Object.keys(catalog.agents), ...Object.keys(state.agents)])];
+  return Promise.all(
+    ids.map(async (id) => {
+      const registryEntry = own(catalog.agents, id);
+      const managed = own(state.agents, id);
+      const entry = registryEntry ?? managed;
+      if (!entry) throw new Error(`[opencode-manager] Agent resource "${id}" has no registry or state metadata`);
+      let bundle: AgentBundle | undefined;
+      let sourceValid = true;
+      if (registryEntry) {
+        try {
+          bundle = await agentBundle(catalog, id, registryEntry);
+        } catch (error) {
+          if (!managed) throw error;
+          sourceValid = false;
+        }
+      }
+      const installedType = managed?.type ?? entry.type;
+      const destination = agentDestination(context, id, installedType);
+      const current = installedType === "single"
+        ? await inspectFile(destination)
+        : await inspectTree(destination, `Agent team "${id}"`);
+      const currentDigest = current.kind === "file" || current.kind === "directory" ? current.digest : undefined;
+      const inherited = !managed && current.kind === "absent" && inheritedAgent(options, id, entry.type);
+      const status: ResourceStatus = managed
+        ? sourceValid && managed.type === entry.type && currentDigest === managed.digest ? "managed" : "modified"
+        : current.kind !== "absent" || inherited ? "conflict" : "absent";
+      return {
+        id,
+        title: entry.title,
+        description: entry.description,
+        tags: entry.tags,
+        path: entry.path,
+        type: entry.type,
+        members: bundle?.members ?? managed?.members ?? 1,
+        status,
+        ownership: managed ? "manager" : current.kind !== "absent" ? "project" : inherited ? "inherited" : "absent",
+      };
+    }),
+  );
+}
+
+export async function setAgentEnabled(
+  options: ManagerOptions,
+  id: string,
+  enabled: boolean,
+  mutation: MutationOptions = {},
+): Promise<AgentStatus> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  let resultEntry: AgentRegistryEntry | undefined;
+  let resultMembers = 1;
+
+  await withProjectLock(context, async () => {
+    const state = await readState(context);
+    const registryEntry = own(catalog.agents, id);
+    const managed = own(state.agents, id);
+    const entry = registryEntry ?? managed;
+    if (!entry) throw new Error(`[opencode-manager] Unknown agent or team "${id}"`);
+    resultEntry = entry;
+    resultMembers = managed?.members ?? 1;
+    const installedType = managed?.type ?? entry.type;
+    const installedDestination = agentDestination(context, id, installedType);
+    const current = installedType === "single"
+      ? await inspectFile(installedDestination)
+      : await inspectTree(installedDestination, `Agent team "${id}"`);
+    const currentDigest = current.kind === "file" || current.kind === "directory" ? current.digest : undefined;
+
+    if (enabled) {
+      if (!registryEntry) throw new Error(`[opencode-manager] Agent resource "${id}" is no longer available in the registry`);
+      const bundle = await agentBundle(catalog, id, registryEntry);
+      resultMembers = bundle.members;
+      const typeChanged = managed !== undefined && installedType !== registryEntry.type;
+      const destination = agentDestination(context, id, registryEntry.type);
+      const target = typeChanged
+        ? registryEntry.type === "single"
+          ? await inspectFile(destination)
+          : await inspectTree(destination, `Agent team "${id}"`)
+        : current;
+      const targetDigest = target.kind === "file" || target.kind === "directory" ? target.digest : undefined;
+      const inherited = !managed && target.kind === "absent" && inheritedAgent(options, id, registryEntry.type);
+      if (current.kind === "unsupported") {
+        throw new Error(`[opencode-manager] Agent destination "${id}" has the wrong type or is a symlink`);
+      }
+      if (target.kind === "unsupported") {
+        throw new Error(`[opencode-manager] Agent target "${id}" has the wrong type or is a symlink`);
+      }
+      const conflict = typeChanged || inherited || (target.kind !== "absent" && !managed) ||
+        (managed && currentDigest !== managed.digest) || (typeChanged && target.kind !== "absent");
+      if (conflict && !mutation.override) {
+        const reason = inherited
+          ? "conflicts with an inherited same-name agent"
+          : typeChanged
+            ? `changed registry type from ${installedType} to ${registryEntry.type}`
+          : managed
+            ? "was modified after manager installation"
+            : "already exists and is unmanaged";
+        throw new Error(`[opencode-manager] Agent resource "${id}" ${reason}; confirm override to preserve and replace it`);
+      }
+      await ensureProjectResourceDirectory(context, context.agentsDir, "agents");
+      const preserve = (typeChanged ? target : current).kind !== "absent" && conflict
+        ? await managedArchivePath(context, "agents", id, "override", registryEntry.type === "team")
+        : undefined;
+      let migratedArchive: string | undefined;
+      if (typeChanged && current.kind !== "absent") {
+        migratedArchive = await managedArchivePath(context, "agents", id, "override", installedType === "team");
+        await rename(installedDestination, migratedArchive);
+      }
+      try {
+        if (targetDigest !== bundle.digest || (conflict && target.kind !== "absent") || typeChanged) {
+          if (registryEntry.type === "single") await replaceManagedFile(bundle.content!, destination, preserve);
+          else await replaceSkillTree(bundle.entries!, destination, preserve);
+        }
+      } catch (error) {
+        if (migratedArchive) await rename(migratedArchive, installedDestination).catch(() => undefined);
+        throw error;
+      }
+      state.agents[id] = { ...registryEntry, digest: bundle.digest, members: bundle.members };
+      await writeState(context, state);
+      return;
+    }
+
+    const inherited = !managed && current.kind === "absent" && inheritedAgent(options, id, entry.type);
+    if (!managed) {
+      if (inherited) throw new Error(`[opencode-manager] Cannot disable inherited agent resource "${id}" project-locally`);
+      if (current.kind !== "absent") throw new Error(`[opencode-manager] Refusing to disable unmanaged agent resource "${id}"`);
+      return;
+    }
+    if (current.kind === "unsupported") {
+      throw new Error(`[opencode-manager] Managed agent destination "${id}" changed type or became a symlink`);
+    }
+    if (current.kind === "absent" && !mutation.override) {
+      throw new Error(`[opencode-manager] Managed agent resource "${id}" is missing`);
+    }
+    if (currentDigest !== undefined && currentDigest !== managed.digest && !mutation.override) {
+      throw new Error(`[opencode-manager] Refusing to disable modified agent resource "${id}" without confirmation`);
+    }
+    if (current.kind !== "absent") {
+      const archive = await managedArchivePath(context, "agents", id, "disabled", installedType === "team");
+      await rename(installedDestination, archive);
+    }
+    delete state.agents[id];
+    await writeState(context, state);
+  });
+
+  if (!enabled && resultEntry) {
+    return { id, ...resultEntry, members: resultMembers, status: "absent", ownership: "absent" };
+  }
+  const updated = (await listAgents(options)).find((item) => item.id === id);
+  if (!updated) throw new Error(`[opencode-manager] Agent resource "${id}" disappeared from the registry`);
+  return updated;
+}
+
+function profileState(
+  profile: RegistryProfile,
+  mcps: McpStatus[],
+  rules: RuleStatus[],
+  agents: AgentStatus[],
+  skills: Map<string, "absent" | "managed" | "modified">,
+): ProfileStatus["status"] {
   const mcpItems = profile.mcps.map((id) => mcps.find((item) => item.id === id)!);
-  if (mcpItems.some((item) => item.status === "conflict")) return "conflict";
-  const skillIDs = profile.skills.map((item) => `${item.source}:${item.path}`);
-  const enabledCount = mcpItems.filter((item) => item.enabled).length + skillIDs.filter((id) => state.skills[id]).length;
-  const total = mcpItems.length + skillIDs.length;
+  const ruleItems = profile.rules.map((id) => rules.find((item) => item.id === id)!);
+  const agentItems = profile.agents.map((id) => agents.find((item) => item.id === id)!);
+  const skillItems = profile.skills.map((item) => skills.get(`${item.source}:${item.path}`) ?? "absent");
+  if (
+    mcpItems.some((item) => item.status === "conflict") ||
+    skillItems.some((status) => status === "modified") ||
+    ruleItems.some((item) => item.status === "conflict" || item.status === "modified") ||
+    agentItems.some((item) => item.status === "conflict" || item.status === "modified")
+  ) {
+    return "conflict";
+  }
+  const enabledCount =
+    mcpItems.filter((item) => item.enabled).length +
+    skillItems.filter((status) => status === "managed").length +
+    ruleItems.filter((item) => item.status === "managed").length +
+    agentItems.filter((item) => item.status === "managed").length;
+  const total = mcpItems.length + skillItems.length + profile.rules.length + profile.agents.length;
   if (enabledCount === 0) return "disabled";
   if (enabledCount === total) return "enabled";
   return "partial";
 }
 
+async function profileSkillStates(
+  catalog: LoadedCatalog,
+  context: ProjectContext,
+  state: ManagerState,
+): Promise<Map<string, "absent" | "managed" | "modified">> {
+  const ids = [...new Set(catalog.profiles.flatMap((profile) => profile.skills.map((item) => `${item.source}:${item.path}`)))];
+  const result = new Map<string, "absent" | "managed" | "modified">();
+  await Promise.all(ids.map(async (id) => {
+    const managed = own(state.skills, id);
+    if (!managed) {
+      result.set(id, "absent");
+      return;
+    }
+    const destination = join(context.skillsDir, managed.name);
+    const current = await inspectTree(destination);
+    result.set(id, current.kind === "directory" && current.digest === managed.digest ? "managed" : "modified");
+  }));
+  return result;
+}
+
 export async function listProfiles(options: ManagerOptions): Promise<ProfileStatus[]> {
-  const [catalog, context, mcps] = await Promise.all([
+  const [catalog, context, mcps, rules, agents] = await Promise.all([
     loadCatalogInternal(options),
     projectContext(options.projectRoot),
     listMcps(options),
+    listRules(options),
+    listAgents(options),
   ]);
   const state = await readState(context);
+  const skills = await profileSkillStates(catalog, context, state);
   return catalog.profiles.map((profile) => {
     const enabledResources =
       profile.mcps.filter((id) => mcps.find((item) => item.id === id)?.enabled).length +
-      profile.skills.filter((item) => state.skills[`${item.source}:${item.path}`]).length;
+      profile.skills.filter((item) => skills.get(`${item.source}:${item.path}`) === "managed").length +
+      profile.rules.filter((id) => rules.find((item) => item.id === id)?.status === "managed").length +
+      profile.agents.filter((id) => agents.find((item) => item.id === id)?.status === "managed").length;
     return {
       ...profile,
-      status: profileState(profile, mcps, state),
+      status: profileState(profile, mcps, rules, agents, skills),
       enabledResources,
-      totalResources: profile.mcps.length + profile.skills.length,
+      totalResources: profile.mcps.length + profile.skills.length + profile.rules.length + profile.agents.length,
     };
   });
 }
 
 export async function getProfile(options: ManagerOptions, profileID: string): Promise<ProfileDetail> {
-  const [catalog, profiles, mcps] = await Promise.all([
+  const [catalog, profiles, mcps, rules, agents] = await Promise.all([
     loadCatalogInternal(options),
     listProfiles(options),
     listMcps(options),
+    listRules(options),
+    listAgents(options),
   ]);
   const profile = profiles.find((item) => item.id === profileID);
   if (!profile) throw new Error(`[opencode-manager] Unknown profile "${profileID}"`);
@@ -1266,11 +2067,15 @@ export async function getProfile(options: ManagerOptions, profileID: string): Pr
   });
   const hasConflict =
     mcps.some((item) => profile.mcps.includes(item.id) && item.status === "conflict") ||
-    skills.some((item) => item.status === "conflict" || item.status === "modified");
+    skills.some((item) => item.status === "conflict" || item.status === "modified") ||
+    rules.some((item) => profile.rules.includes(item.id) && ["conflict", "modified"].includes(item.status)) ||
+    agents.some((item) => profile.agents.includes(item.id) && ["conflict", "modified"].includes(item.status));
   return {
     profile: hasConflict ? { ...profile, status: "conflict" } : profile,
     mcps: profile.mcps.map((id) => mcps.find((item) => item.id === id)!),
     skills,
+    rules: profile.rules.map((id) => rules.find((item) => item.id === id)!),
+    agents: profile.agents.map((id) => agents.find((item) => item.id === id)!),
   };
 }
 
@@ -1293,6 +2098,18 @@ export async function setProfileEnabled(
   if (skillConflict && !mutation.override) {
     throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting skill "${skillConflict.name}"; confirm override to continue`);
   }
+  const ruleConflict = detail.rules.find((item) =>
+    enabled ? item.status === "conflict" || item.status === "modified" : item.status === "modified",
+  );
+  if (ruleConflict && !mutation.override) {
+    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting rule "${ruleConflict.id}"; confirm override to continue`);
+  }
+  const agentConflict = detail.agents.find((item) =>
+    enabled ? item.status === "conflict" || item.status === "modified" : item.status === "modified",
+  );
+  if (agentConflict && !mutation.override) {
+    throw new Error(`[opencode-manager] Profile "${profileID}" has conflicting agent resource "${agentConflict.id}"; confirm override to continue`);
+  }
 
   let applied = 0;
   try {
@@ -1305,6 +2122,16 @@ export async function setProfileEnabled(
     for (const skill of detail.skills) {
       if (!enabled && (skill.status === "absent" || skill.status === "conflict")) continue;
       await setSkillEnabled(options, skill.source, skill.path, enabled, mutation);
+      applied += 1;
+    }
+    for (const rule of detail.rules) {
+      if (!enabled && (rule.status === "absent" || rule.status === "conflict")) continue;
+      await setRuleEnabled(options, rule.id, enabled, mutation);
+      applied += 1;
+    }
+    for (const agent of detail.agents) {
+      if (!enabled && (agent.status === "absent" || agent.status === "conflict")) continue;
+      await setAgentEnabled(options, agent.id, enabled, mutation);
       applied += 1;
     }
   } catch (error) {

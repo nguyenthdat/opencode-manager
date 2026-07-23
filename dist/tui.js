@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const DEFAULT_CATALOG = fileURLToPath(new URL("../registry/catalog.jsonc", import.meta.url));
 function isSelection(value) {
-    return value.type === "profile" || value.type === "mcp" || value.type === "skill";
+    return ["profile", "mcp", "skill", "rule", "agent"].includes(value.type);
 }
 export function resolveProjectRoot(worktree, directory) {
     return resolve(worktree && worktree !== "/" ? worktree : directory);
@@ -12,10 +12,12 @@ function errorMessage(error) {
 }
 function options(state) {
     const mcp = state.api.state.config?.mcp;
+    const agent = state.api.state.config?.agent;
     return {
         projectRoot: state.projectRoot,
         catalogPath: state.catalogPath,
         effectiveMcp: mcp && typeof mcp === "object" && !Array.isArray(mcp) ? mcp : undefined,
+        effectiveAgent: agent && typeof agent === "object" && !Array.isArray(agent) ? agent : undefined,
     };
 }
 async function manager() {
@@ -44,6 +46,13 @@ function mcpFooter(state, mcp) {
 function skillFooter(skill) {
     const nested = skill.nestedSkills ? ` · includes ${skill.nestedSkills} nested` : "";
     return `${skill.status}${nested}`;
+}
+function ruleFooter(rule) {
+    return `${rule.status} · ${rule.ownership}`;
+}
+function agentFooter(agent) {
+    const members = agent.type === "team" ? ` · ${agent.members} members` : "";
+    return `${agent.status} · ${agent.ownership} · ${agent.type}${members}`;
 }
 function sourceFooter(source) {
     const pin = source.revision ? ` · ${source.revision.slice(0, 8)}` : "";
@@ -86,6 +95,18 @@ async function showManager(state) {
                 description: "Browse and toggle individual project MCP definitions",
                 category: "Registries",
             },
+            {
+                title: "Rule Registry",
+                value: { type: "rules" },
+                description: "Install project instructions and keep project config references in sync",
+                category: "Registries",
+            },
+            {
+                title: "Agent Registry",
+                value: { type: "agents" },
+                description: "Install standalone agents or complete agent teams",
+                category: "Registries",
+            },
             ...sources.map((source) => ({
                 title: source.title,
                 value: { type: "open-source", source },
@@ -96,7 +117,7 @@ async function showManager(state) {
         ];
         replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
             title: "Project Stack Manager",
-            placeholder: "Search profiles, MCPs, or skill registries",
+            placeholder: "Search profiles, MCPs, rules, agents, or skills",
             options: rows,
             onMove() {
                 state.selection = undefined;
@@ -109,6 +130,10 @@ async function showManager(state) {
                     void showProfile(state, option.value.profile.id);
                 if (option.value.type === "mcps")
                     void showMcps(state);
+                if (option.value.type === "rules")
+                    void showRules(state);
+                if (option.value.type === "agents")
+                    void showAgents(state);
                 if (option.value.type === "open-source")
                     void showSource(state, option.value.source.id);
             },
@@ -146,6 +171,20 @@ async function showProfile(state, profileID) {
                 description: `${skill.sourceTitle}: ${skill.description}`,
                 footer: skillFooter(skill),
                 category: "Skills",
+            })),
+            ...detail.rules.map((rule) => ({
+                title: rule.title,
+                value: { type: "rule", rule, parent },
+                description: rule.description,
+                footer: ruleFooter(rule),
+                category: "Rules",
+            })),
+            ...detail.agents.map((agent) => ({
+                title: agent.title,
+                value: { type: "agent", agent, parent },
+                description: agent.description,
+                footer: agentFooter(agent),
+                category: agent.type === "team" ? "Agent Teams" : "Agents",
             })),
         ];
         replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
@@ -189,6 +228,80 @@ async function showMcps(state) {
         replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
             title: "MCP Registry",
             placeholder: "Search MCPs · Enter/Space toggles",
+            options: rows,
+            onMove(option) {
+                state.selection = isSelection(option.value) ? option.value : undefined;
+            },
+            onFilter() {
+                state.selection = undefined;
+            },
+            onSelect(option) {
+                if (option.value.type === "back")
+                    void showManager(state);
+                else if (isSelection(option.value))
+                    confirmToggle(state, option.value);
+            },
+        }));
+    }
+    catch (error) {
+        state.api.ui.toast({ variant: "error", message: errorMessage(error) });
+    }
+}
+async function showRules(state) {
+    try {
+        const api = await manager();
+        const rules = await api.listRules(options(state));
+        const parent = () => showRules(state);
+        const rows = [
+            navigation("Back to manager"),
+            ...rules.map((rule) => ({
+                title: rule.title,
+                value: { type: "rule", rule, parent },
+                description: `${rule.description} [${rule.id}]`,
+                footer: ruleFooter(rule),
+                category: rule.tags[0] ?? "Rules",
+            })),
+        ];
+        replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
+            title: "Rule Registry",
+            placeholder: "Search project rules · Enter/Space toggles",
+            options: rows,
+            onMove(option) {
+                state.selection = isSelection(option.value) ? option.value : undefined;
+            },
+            onFilter() {
+                state.selection = undefined;
+            },
+            onSelect(option) {
+                if (option.value.type === "back")
+                    void showManager(state);
+                else if (isSelection(option.value))
+                    confirmToggle(state, option.value);
+            },
+        }));
+    }
+    catch (error) {
+        state.api.ui.toast({ variant: "error", message: errorMessage(error) });
+    }
+}
+async function showAgents(state) {
+    try {
+        const api = await manager();
+        const agents = await api.listAgents(options(state));
+        const parent = () => showAgents(state);
+        const rows = [
+            navigation("Back to manager"),
+            ...agents.map((agent) => ({
+                title: agent.title,
+                value: { type: "agent", agent, parent },
+                description: `${agent.description} [${agent.id}]`,
+                footer: agentFooter(agent),
+                category: agent.type === "team" ? "Agent Teams" : agent.tags[0] ?? "Agents",
+            })),
+        ];
+        replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
+            title: "Agent Registry",
+            placeholder: "Search standalone agents or teams · Enter/Space toggles",
             options: rows,
             onMove(option) {
                 state.selection = isSelection(option.value) ? option.value : undefined;
@@ -262,7 +375,11 @@ function selectionEnabled(selection) {
     if (selection.type === "mcp")
         return selection.mcp.enabled;
     if (selection.type === "skill")
-        return selection.skill.status === "managed";
+        return selection.skill.status === "managed" || selection.skill.status === "modified";
+    if (selection.type === "rule")
+        return selection.rule.status === "managed" || selection.rule.status === "modified";
+    if (selection.type === "agent")
+        return selection.agent.status === "managed" || selection.agent.status === "modified";
     return false;
 }
 function selectionLabel(selection) {
@@ -272,6 +389,10 @@ function selectionLabel(selection) {
         return selection.mcp.title;
     if (selection.type === "skill")
         return selection.skill.name;
+    if (selection.type === "rule")
+        return selection.rule.title;
+    if (selection.type === "agent")
+        return selection.agent.title;
     return "resource";
 }
 function activeSessionBusy(api) {
@@ -289,7 +410,11 @@ function selectionConflict(selection) {
         return selection.profile.status === "conflict";
     if (selection.type === "mcp")
         return selection.mcp.status === "conflict";
-    return selection.skill.status === "conflict" || selection.skill.status === "modified";
+    if (selection.type === "skill")
+        return selection.skill.status === "conflict" || selection.skill.status === "modified";
+    if (selection.type === "rule")
+        return selection.rule.status === "conflict" || selection.rule.status === "modified";
+    return selection.agent.status === "conflict" || selection.agent.status === "modified";
 }
 function confirmToggle(state, selection, forcedEnabled) {
     const enabled = forcedEnabled ?? !selectionEnabled(selection);
@@ -300,7 +425,13 @@ function confirmToggle(state, selection, forcedEnabled) {
         ? "\n\nThis MCP conflicts with an existing definition and the operation will be refused."
         : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
             ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
-            : "";
+            : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
+                ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
+                : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
+                    ? selection.agent.ownership === "inherited"
+                        ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
+                        : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
+                    : "";
     const busy = activeSessionBusy(state.api)
         ? "\n\nThe active session is busy and may be interrupted when OpenCode reloads."
         : "";
@@ -335,8 +466,14 @@ async function applyToggle(state, selection, enabled, override) {
         else if (selection.type === "mcp") {
             await api.setMcpEnabled(options(state), selection.mcp.id, enabled, { override });
         }
-        else {
+        else if (selection.type === "skill") {
             await api.setSkillEnabled(options(state), selection.skill.source, selection.skill.path, enabled, { override });
+        }
+        else if (selection.type === "rule") {
+            await api.setRuleEnabled(options(state), selection.rule.id, enabled, { override });
+        }
+        else {
+            await api.setAgentEnabled(options(state), selection.agent.id, enabled, { override });
         }
         saved = true;
         state.api.ui.toast({ variant: "info", message: `Reloading project resources for ${label}...` });
@@ -388,7 +525,7 @@ const tui = async (api, pluginOptions) => {
             {
                 name: "opencode_manager_open",
                 title: "Project Stack Manager",
-                desc: "Manage project MCPs, skills, and stack profiles",
+                desc: "Manage project MCPs, rules, agents, skills, and stack profiles",
                 category: "Project",
                 namespace: "palette",
                 slashName: "manager",
