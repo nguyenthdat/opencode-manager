@@ -51,6 +51,13 @@ export interface McpRegistryEntry {
   config: JsonObject;
 }
 
+export interface PluginRegistryEntry {
+  title: string;
+  description: string;
+  tags: string[];
+  package: string;
+}
+
 export interface FileRegistryEntry {
   title: string;
   description: string;
@@ -68,6 +75,7 @@ export interface LocalSkillSource {
   path: string;
   skillsPath: string;
   license?: string;
+  ignoreSymlinks?: boolean;
 }
 
 export interface GitSkillSource {
@@ -77,6 +85,7 @@ export interface GitSkillSource {
   revision: string;
   skillsPath: string;
   license?: string;
+  ignoreSymlinks?: boolean;
 }
 
 export type SkillSource = LocalSkillSource | GitSkillSource;
@@ -100,6 +109,7 @@ export interface RegistryProfile {
 export interface RegistryCatalog {
   version: 1;
   mcps: Record<string, McpRegistryEntry>;
+  plugins: Record<string, PluginRegistryEntry>;
   skillSources: Record<string, SkillSource>;
   rules: Record<string, FileRegistryEntry>;
   agents: Record<string, AgentRegistryEntry>;
@@ -116,6 +126,7 @@ export interface ManagerOptions {
   catalogPath?: string;
   effectiveMcp?: Record<string, unknown>;
   effectiveAgent?: Record<string, unknown>;
+  effectivePlugin?: readonly unknown[];
 }
 
 export interface MutationOptions {
@@ -130,6 +141,13 @@ export interface McpStatus {
   description: string;
   tags: string[];
   type: "local" | "remote";
+  enabled: boolean;
+  status: ResourceStatus;
+  ownership: "manager" | "project" | "inherited" | "absent";
+}
+
+export interface PluginStatus extends PluginRegistryEntry {
+  id: string;
   enabled: boolean;
   status: ResourceStatus;
   ownership: "manager" | "project" | "inherited" | "absent";
@@ -188,6 +206,10 @@ interface ManagedMcpState {
   appliedHash: string;
 }
 
+interface ManagedPluginState {
+  package: string;
+}
+
 interface ManagedSkillState {
   source: string;
   sourcePath: string;
@@ -209,6 +231,7 @@ interface ManagedAgentState extends AgentRegistryEntry {
 interface ManagerState {
   version: 1;
   mcps: Record<string, ManagedMcpState>;
+  plugins: Record<string, ManagedPluginState>;
   skills: Record<string, ManagedSkillState>;
   rules: Record<string, ManagedRuleState>;
   agents: Record<string, ManagedAgentState>;
@@ -411,6 +434,7 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
   const value = parseJsonc(file, await readFile(file, "utf8"));
   if (value.version !== 1) throw new Error("[opencode-manager] Registry version must be 1");
   if (!isObject(value.mcps)) throw new Error("[opencode-manager] Registry mcps must be an object");
+  if (!isObject(value.plugins ?? {})) throw new Error("[opencode-manager] Registry plugins must be an object");
   if (!isObject(value.skillSources)) throw new Error("[opencode-manager] Registry skillSources must be an object");
   if (!Array.isArray(value.profiles)) throw new Error("[opencode-manager] Registry profiles must be an array");
 
@@ -425,13 +449,34 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     };
   }
 
+  const plugins: Record<string, PluginRegistryEntry> = {};
+  const pluginPackages = new Set<string>();
+  for (const [id, raw] of Object.entries((value.plugins ?? {}) as JsonObject)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid plugin id "${id}"`);
+    const packageName = text(raw.package, `plugin "${id}" package`);
+    if (pluginPackages.has(packageName)) {
+      throw new Error(`[opencode-manager] Duplicate plugin package "${packageName}"`);
+    }
+    pluginPackages.add(packageName);
+    plugins[id] = {
+      title: text(raw.title, `plugin "${id}" title`),
+      description: text(raw.description, `plugin "${id}" description`),
+      tags: stringList(raw.tags ?? [], `plugin "${id}" tags`),
+      package: packageName,
+    };
+  }
+
   const skillSources: Record<string, SkillSource> = {};
   for (const [id, raw] of Object.entries(value.skillSources)) {
     if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid skill source id "${id}"`);
+    if (raw.ignoreSymlinks !== undefined && typeof raw.ignoreSymlinks !== "boolean") {
+      throw new Error(`[opencode-manager] Skill source "${id}" ignoreSymlinks must be boolean`);
+    }
     const base = {
       title: text(raw.title, `skill source "${id}" title`),
       skillsPath: safeRelativePath(raw.skillsPath ?? ".", `skill source "${id}" skillsPath`),
       ...(raw.license === undefined ? {} : { license: text(raw.license, `skill source "${id}" license`) }),
+      ...(raw.ignoreSymlinks === undefined ? {} : { ignoreSymlinks: raw.ignoreSymlinks }),
     };
     if (raw.type === "local") {
       skillSources[id] = {
@@ -498,7 +543,7 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     });
   }
 
-  return { version: 1, file, root: dirname(file), mcps, skillSources, rules, agents, profiles };
+  return { version: 1, file, root: dirname(file), mcps, plugins, skillSources, rules, agents, profiles };
 }
 
 function isWithin(target: string, root: string): boolean {
@@ -582,7 +627,7 @@ async function ensureContainedDirectory(path: string, parent: string, label: str
 }
 
 function emptyState(): ManagerState {
-  return { version: 1, mcps: {}, skills: {}, rules: {}, agents: {} };
+  return { version: 1, mcps: {}, plugins: {}, skills: {}, rules: {}, agents: {} };
 }
 
 async function readState(context: ProjectContext): Promise<ManagerState> {
@@ -600,8 +645,16 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
   if (value.rules !== undefined && !isObject(value.rules)) {
     throw new Error(`[opencode-manager] Invalid manager rule state in ${context.stateFile}`);
   }
+  if (value.plugins !== undefined && !isObject(value.plugins)) {
+    throw new Error(`[opencode-manager] Invalid manager plugin state in ${context.stateFile}`);
+  }
   if (value.agents !== undefined && !isObject(value.agents)) {
     throw new Error(`[opencode-manager] Invalid manager agent state in ${context.stateFile}`);
+  }
+  const plugins: Record<string, ManagedPluginState> = {};
+  for (const [id, raw] of Object.entries((value.plugins ?? {}) as JsonObject)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid managed plugin state "${id}"`);
+    plugins[id] = { package: text(raw.package, `managed plugin "${id}" package`) };
   }
   const rules: Record<string, ManagedRuleState> = {};
   for (const [id, raw] of Object.entries((value.rules ?? {}) as JsonObject)) {
@@ -664,6 +717,7 @@ async function readState(context: ProjectContext): Promise<ManagerState> {
   return {
     version: 1,
     mcps: value.mcps as Record<string, ManagedMcpState>,
+    plugins,
     skills: value.skills as Record<string, ManagedSkillState>,
     rules,
     agents,
@@ -1037,6 +1091,209 @@ export async function setMcpEnabled(
   return updated;
 }
 
+function pluginSpecifier(value: unknown): string | undefined {
+  if (typeof value === "string" && value.trim() !== "") return value;
+  if (
+    Array.isArray(value)
+    && value.length === 2
+    && typeof value[0] === "string"
+    && value[0].trim() !== ""
+    && isObject(value[1])
+  ) {
+    return value[0];
+  }
+  return undefined;
+}
+
+function projectPlugins(config: ProjectConfig): unknown[] {
+  if (config.value.plugin === undefined) return [];
+  if (!Array.isArray(config.value.plugin) || config.value.plugin.some((value) => !pluginSpecifier(value))) {
+    throw new Error(`[opencode-manager] Project config "plugin" must be an array of package strings or [package, options] tuples`);
+  }
+  return [...config.value.plugin];
+}
+
+function matchesPluginPackage(value: unknown, packageName: string): boolean {
+  const specifier = pluginSpecifier(value);
+  return specifier === packageName || specifier?.startsWith(`${packageName}@`) === true;
+}
+
+function exactPluginPackage(value: unknown, packageName: string): boolean {
+  return typeof value === "string" && value === packageName;
+}
+
+function matchingPluginIndices(values: readonly unknown[], packageName: string): number[] {
+  const indices: number[] = [];
+  for (let index = 0; index < values.length; index += 1) {
+    if (matchesPluginPackage(values[index], packageName)) indices.push(index);
+  }
+  return indices;
+}
+
+function managedPluginIndices(
+  values: readonly unknown[],
+  packageName: string,
+  managed: ManagedPluginState | undefined,
+): number[] {
+  const packageNames = managed && managed.package !== packageName
+    ? [packageName, managed.package]
+    : [packageName];
+  return values.flatMap((value, index) =>
+    packageNames.some((candidate) => matchesPluginPackage(value, candidate)) ? [index] : [],
+  );
+}
+
+function effectivePluginMatches(options: ManagerOptions, packageName: string): unknown[] {
+  return (options.effectivePlugin ?? []).filter((value) => matchesPluginPackage(value, packageName));
+}
+
+export async function listPlugins(options: ManagerOptions): Promise<PluginStatus[]> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  const [config, state] = await Promise.all([readProjectConfig(context), readState(context)]);
+  const values = projectPlugins(config);
+  return Object.entries(catalog.plugins).map(([id, entry]) => {
+    const managed = state.plugins[id];
+    const rawMatches = managedPluginIndices(values, entry.package, managed).map((index) => values[index]);
+    const inheritedMatches = rawMatches.length === 0 ? effectivePluginMatches(options, entry.package) : [];
+    const candidate = rawMatches[0] ?? inheritedMatches[0];
+    const ownership = managed
+      ? "manager"
+      : rawMatches.length > 0
+        ? "project"
+        : inheritedMatches.length > 0
+          ? "inherited"
+          : "absent";
+    const conflict = rawMatches.length > 1
+      || inheritedMatches.length > 1
+      || (candidate !== undefined && !exactPluginPackage(candidate, entry.package))
+      || (managed !== undefined && (
+        managed.package !== entry.package
+        || rawMatches.length !== 1
+        || !exactPluginPackage(rawMatches[0], entry.package)
+      ));
+    return {
+      id,
+      ...entry,
+      enabled: candidate !== undefined,
+      status: conflict ? "conflict" : candidate === undefined ? "absent" : "enabled",
+      ownership,
+    };
+  });
+}
+
+async function backupPlugin(context: ProjectContext, id: string, values: readonly unknown[]): Promise<void> {
+  if (values.length === 0) return;
+  const backupRoot = await ensureContainedDirectory(context.backupDir, context.managerDir, "backup");
+  const directory = await ensureContainedDirectory(join(backupRoot, "plugins"), backupRoot, "plugin backup");
+  const file = join(directory, `${id}-${Date.now()}-${randomUUID()}.json`);
+  await writeAtomic(file, `${JSON.stringify(values, null, 2)}\n`, 0o600);
+}
+
+function removeProjectPlugins(source: string, indices: readonly number[]): string {
+  let updated = source;
+  for (const index of [...indices].sort((a, b) => b - a)) {
+    updated = applyEdits(
+      updated,
+      modify(updated, ["plugin", index], undefined, { formattingOptions: { insertSpaces: true, tabSize: 2 } }),
+    );
+  }
+  return updated;
+}
+
+function appendProjectPlugin(config: ProjectConfig, source: string, packageName: string): string {
+  const path = config.value.plugin === undefined ? ["plugin"] : ["plugin", -1];
+  const value = config.value.plugin === undefined ? [packageName] : packageName;
+  return applyEdits(source, modify(source, path, value, { formattingOptions: { insertSpaces: true, tabSize: 2 } }));
+}
+
+export async function setPluginEnabled(
+  options: ManagerOptions,
+  id: string,
+  enabled: boolean,
+  mutation: MutationOptions = {},
+): Promise<PluginStatus> {
+  const [catalog, context] = await Promise.all([loadCatalogInternal(options), projectContext(options.projectRoot)]);
+  const entry = catalog.plugins[id];
+  if (!entry) throw new Error(`[opencode-manager] Unknown plugin "${id}"`);
+
+  await withProjectLock(context, async () => {
+    const [config, state] = await Promise.all([readProjectConfig(context), readState(context)]);
+    const values = projectPlugins(config);
+    const managed = state.plugins[id];
+    const indices = managedPluginIndices(values, entry.package, managed);
+    const rawMatches = indices.map((index) => values[index]);
+    const inheritedMatches = indices.length === 0 ? effectivePluginMatches(options, entry.package) : [];
+    const exactLocal = indices.length === 1 && exactPluginPackage(rawMatches[0], entry.package);
+    let nextSource = config.source;
+
+    if (enabled) {
+      if (managed) {
+        if (indices.length === 0 && inheritedMatches.length > 0) {
+          if (!mutation.override) {
+            throw new Error(`[opencode-manager] Plugin "${id}" was modified after manager installation`);
+          }
+          if (inheritedMatches.length !== 1 || !exactPluginPackage(inheritedMatches[0], entry.package)) {
+            throw new Error(`[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`);
+          }
+          delete state.plugins[id];
+        } else if (managed.package !== entry.package || !exactLocal) {
+          if (!mutation.override) {
+            throw new Error(`[opencode-manager] Plugin "${id}" was modified after manager installation`);
+          }
+          await backupPlugin(context, id, rawMatches);
+          nextSource = appendProjectPlugin(config, removeProjectPlugins(nextSource, indices), entry.package);
+          state.plugins[id] = { package: entry.package };
+        } else {
+          state.plugins[id] = { package: entry.package };
+        }
+      } else if (indices.length > 0) {
+        if (!exactLocal) {
+          if (!mutation.override) {
+            throw new Error(`[opencode-manager] Plugin "${id}" conflicts with the registry package`);
+          }
+          await backupPlugin(context, id, rawMatches);
+          nextSource = appendProjectPlugin(config, removeProjectPlugins(nextSource, indices), entry.package);
+          state.plugins[id] = { package: entry.package };
+        }
+      } else if (inheritedMatches.length > 0) {
+        if (inheritedMatches.length !== 1 || !exactPluginPackage(inheritedMatches[0], entry.package)) {
+          throw new Error(`[opencode-manager] Inherited plugin "${id}" conflicts and cannot be overridden project-locally`);
+        }
+      } else {
+        nextSource = appendProjectPlugin(config, nextSource, entry.package);
+        state.plugins[id] = { package: entry.package };
+      }
+    } else if (managed) {
+      if (indices.length === 0 && inheritedMatches.length > 0) {
+        throw new Error(`[opencode-manager] Inherited plugin "${id}" cannot be disabled from this project`);
+      }
+      if (managed.package !== entry.package || !exactLocal) {
+        if (!mutation.override) {
+          throw new Error(`[opencode-manager] Plugin "${id}" was modified after manager installation`);
+        }
+        await backupPlugin(context, id, rawMatches);
+      }
+      nextSource = removeProjectPlugins(nextSource, indices);
+      delete state.plugins[id];
+    } else if (indices.length > 0) {
+      if (!exactLocal && !mutation.override) {
+        throw new Error(`[opencode-manager] Plugin "${id}" conflicts with the registry package`);
+      }
+      await backupPlugin(context, id, rawMatches);
+      nextSource = removeProjectPlugins(nextSource, indices);
+    } else if (inheritedMatches.length > 0) {
+      throw new Error(`[opencode-manager] Inherited plugin "${id}" cannot be disabled from this project`);
+    }
+
+    if (nextSource !== config.source) await writeAtomic(context.configFile, nextSource, config.mode);
+    await writeState(context, state);
+  });
+
+  const updated = (await listPlugins(options)).find((plugin) => plugin.id === id);
+  if (!updated) throw new Error(`[opencode-manager] Plugin "${id}" disappeared from the registry`);
+  return updated;
+}
+
 function runGit(args: string[], cwd?: string, timeoutMs = 90_000): Promise<string> {
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn("git", ["-c", "protocol.file.allow=never", "-c", "core.hooksPath=/dev/null", ...args], {
@@ -1380,18 +1637,21 @@ function parseSkillFrontmatter(file: string, source: string): { name: string; de
   return { name, description: text(value.description, `skill ${file} description`) };
 }
 
-async function discoverSkillDirectories(root: string): Promise<string[]> {
+async function discoverSkillDirectories(root: string, ignoreSymlinks = false): Promise<string[]> {
   const found: string[] = [];
   let visited = 0;
   async function visit(directory: string): Promise<void> {
     for (const name of (await readdir(directory)).sort()) {
       const absolute = join(directory, name);
       const info = await lstat(absolute);
-      if (info.isSymbolicLink()) throw new Error(`[opencode-manager] Skill source contains symlink ${absolute}`);
-      if (info.isFile() && name === "SKILL.md") found.push(dirname(absolute));
-      if (info.isDirectory()) await visit(absolute);
       visited += 1;
       if (visited > 20_000) throw new Error("[opencode-manager] Skill source has too many entries");
+      if (info.isSymbolicLink()) {
+        if (ignoreSymlinks) continue;
+        throw new Error(`[opencode-manager] Skill source contains symlink ${absolute}`);
+      }
+      if (info.isFile() && name === "SKILL.md") found.push(dirname(absolute));
+      if (info.isDirectory()) await visit(absolute);
     }
   }
   await visit(root);
@@ -1416,7 +1676,7 @@ export async function listSkills(options: ManagerOptions, sourceID: string): Pro
   const source = catalog.skillSources[sourceID];
   if (!source) throw new Error(`[opencode-manager] Unknown skill source "${sourceID}"`);
   const root = await skillSourceRoot(catalog, context, sourceID);
-  const discovered = await discoverSkillDirectories(root);
+  const discovered = await discoverSkillDirectories(root, source.ignoreSymlinks);
   const directorySet = new Set(discovered);
   const directories = discovered.filter((directory) => {
     let parent = dirname(directory);
@@ -1643,6 +1903,43 @@ export async function setSkillEnabled(
   const updated = (await listSkills(options, sourceID)).find((item) => item.path === normalizedPath);
   if (!updated) throw new Error(`[opencode-manager] Skill "${id}" disappeared from its source`);
   return updated;
+}
+
+export async function setSkillSourceEnabled(
+  options: ManagerOptions,
+  sourceID: string,
+  enabled: boolean,
+  mutation: MutationOptions = {},
+): Promise<SkillStatus[]> {
+  const skills = await listSkills(options, sourceID);
+  const conflict = skills.find((skill) =>
+    enabled
+      ? skill.status === "conflict" || skill.status === "modified"
+      : skill.status === "modified",
+  );
+  if (conflict && !mutation.override) {
+    throw new Error(
+      `[opencode-manager] Skill source "${sourceID}" has conflicting skill "${conflict.name}"; confirm override to continue`,
+    );
+  }
+
+  let applied = 0;
+  try {
+    for (const skill of skills) {
+      if (enabled && skill.status === "managed") continue;
+      if (!enabled && (skill.status === "absent" || skill.status === "conflict")) continue;
+      await setSkillEnabled(options, sourceID, skill.path, enabled, mutation);
+      applied += 1;
+    }
+  } catch (error) {
+    if (applied === 0) throw error;
+    const message = error instanceof Error ? error.message : String(error);
+    throw Object.assign(
+      new Error(`[opencode-manager] Skill source "${sourceID}" was partially applied: ${message}`),
+      { partialApplied: true, cause: error },
+    );
+  }
+  return listSkills(options, sourceID);
 }
 
 function ruleInstruction(id: string): string {

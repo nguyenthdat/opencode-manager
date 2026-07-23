@@ -1,7 +1,7 @@
 # Opencode Manager
 
-OpenCode TUI plugin for selecting the MCP servers, rules, standalone agents,
-agent teams, and skills that belong to each project. It combines
+OpenCode TUI plugin for selecting the MCP servers, plugins, rules, standalone
+agents, agent teams, and skills that belong to each project. It combines
 repository-owned registries, pinned vendor skill sources, and reusable stack
 profiles.
 
@@ -13,18 +13,21 @@ config references may be patched in an existing root config as described below.
 
 - **MCP registry:** complete local and remote MCP definitions in
   `registry/catalog.jsonc`.
+- **Plugin registry:** reviewed OpenCode plugin packages added only to the
+  active project's `plugin` config array.
 - **Custom skills:** skills maintained in this repository under
   `registry/skills/<name>/SKILL.md`.
 - **Vendor skills:** reproducible, commit-pinned skill repositories from
-  Cloudflare, ClickHouse, Redpanda, Qdrant, Windmill, and future vendors.
+  Cloudflare, Microsoft, Hugging Face, Vercel Labs, K-Dense, Qt, and other
+  reviewed publishers.
 - **Rules:** project instruction files installed under `.opencode/instructions/`
   and registered in the project config's `instructions` list.
 - **Agents:** standalone `.md` agents and folder-based teams installed under
   `.opencode/agents/`.
 - **Profiles:** curated groups of MCPs, rules, agents, and skills for a project
   stack or scope, such as Cloudflare, architecture, security, or Rust.
-- **Individual resources:** every MCP, rule, agent/team, and top-level skill
-  bundle can also be enabled or disabled separately.
+- **Individual resources:** every MCP, plugin, rule, agent/team, and top-level
+  skill bundle can also be enabled or disabled separately.
 
 ## Project scope
 
@@ -98,6 +101,7 @@ The first screen contains:
 
 - Stack profiles, with the number of selected resources.
 - The complete MCP registry.
+- The project-local OpenCode plugin registry.
 - The project rule registry.
 - Standalone agents and folder-based agent teams.
 - Custom and vendor skill registries.
@@ -107,6 +111,8 @@ Inside a profile or registry:
 - `Enter` or `Space` toggles the selected resource.
 - `Ctrl+E` enables it.
 - `Ctrl+D` disables it.
+- Skill sources with multiple skills include an **All skills** action for
+  installing or removing the complete source in one operation.
 
 Applying a change reloads the active OpenCode project instance once so MCP,
 rule, agent, and skill state is refreshed. If reload fails after files were
@@ -152,6 +158,39 @@ When an MCP is enabled:
    an approved project MCP override is backed up first.
 4. Manager-installed definitions receive a fingerprint so registry updates can
    be applied only while the project copy remains unmodified.
+
+## Plugin registry
+
+Plugin entries add reviewed packages to the active project's OpenCode config:
+
+```jsonc
+{
+  "plugins": {
+    "svelte": {
+      "title": "Svelte",
+      "description": "Official Svelte integration for OpenCode.",
+      "tags": ["svelte", "frontend"],
+      "package": "@sveltejs/opencode"
+    }
+  }
+}
+```
+
+Enabling this entry adds only `"@sveltejs/opencode"` to the existing `plugin`
+array. Disabling it removes only that exact package entry. Other plugins,
+configuration fields, and JSONC comments are preserved. A same-package tuple
+with custom options or a versioned package is treated as a conflict; approved
+replacement or removal backs up the previous entry under
+`.opencode/.opencode-manager/backups/plugins/`.
+
+Inherited plugins are displayed but cannot be disabled project-locally because
+OpenCode has no project-level negative plugin entry. Remove those from their
+parent or global config instead.
+
+The bundled Svelte entry follows the official
+[`@sveltejs/opencode` installation](https://svelte.dev/docs/ai/opencode-plugin).
+It supplies the Svelte MCP, Svelte skills, and the `svelte-file-editor`
+subagent.
 
 ## Custom skill registry
 
@@ -285,7 +324,8 @@ Vendor sources live under `skillSources`:
       "repository": "https://github.com/vendor/skills.git",
       "revision": "0123456789abcdef0123456789abcdef01234567",
       "skillsPath": "skills",
-      "license": "Apache-2.0"
+      "license": "Apache-2.0",
+      "ignoreSymlinks": false
     }
   }
 }
@@ -295,9 +335,70 @@ Vendor sources live under `skillSources`:
 changes and changing that SHA in the registry. The plugin does not silently
 follow a mutable branch.
 
+`ignoreSymlinks` defaults to `false`. It is enabled only for sources such as
+Microsoft that publish compatibility symlink mirrors. Discovery skips those
+mirrors without following them; installation still rejects any symlink inside
+a selected bundle.
+
 For repositories with nested skills, the top-level directory containing a
 `SKILL.md` is treated as the selectable bundle. Descendant skills are included
 and displayed as part of that bundle.
+
+The requested source expansion adds these pinned collections:
+
+| Source ID | Repository | Canonical path | Bundles |
+| --- | --- | --- | ---: |
+| `k-dense-scientific` | `K-Dense-AI/scientific-agent-skills` | `skills` | 149 |
+| `pm-skills` | `phuryn/pm-skills` | repository root | 68 |
+| `marketing-skills` | `coreyhaines31/marketingskills` | `skills` | 48 |
+| `addy-agent-skills` | `addyosmani/agent-skills` | `skills` | 24 |
+| `microsoft-core` | `microsoft/skills` | `.github/skills` | 13 |
+| `microsoft` | `microsoft/skills` | `.github/plugins` | 169 |
+| `qt` | `TheQtCompanyRnD/agent-skills` | `skills` | 12 |
+| `huggingface` | `huggingface/skills` | `skills` | 25 |
+| `finance` | `himself65/finance-skills` | `plugins` | 26 |
+| `marketcalls-vectorbt` | `marketcalls/vectorbt-backtesting-skills` | `.claude/skills` | 6 |
+| `agiprolabs-trading` | `agiprolabs/claude-trading-skills` | `skills` | 67 |
+| `okx` | `okx/agent-skills` | `skills` | 11 |
+
+`phuryn/pm-skill` does not exist; the registry uses the upstream repository's
+actual plural name, `phuryn/pm-skills`. The duplicated K-Dense request is
+registered once. Microsoft is intentionally split into core and plugin sources
+to avoid its compatibility mirrors while retaining all 182 bundles.
+
+K-Dense uses mixed per-skill licenses, so no misleading source-wide license is
+declared. AGIPro currently includes three upstream stub skills and one broken
+cross-skill reference. Seven OKX bundles reference sibling
+`skills/_shared/preflight.md`; the current per-bundle installer does not copy
+that sibling helper, so those specific OKX bundles should be treated as having
+an upstream packaging caveat. Same-name skills across different sources remain
+protected by the normal conflict and override workflow.
+
+### Automated revision updates
+
+[`update-skill-sources.yml`](.github/workflows/update-skill-sources.yml) runs
+every Monday at 04:23 UTC and can also be started with `workflow_dispatch`. It:
+
+1. Resolves the remote `HEAD` commit once per unique Git repository.
+2. Patches only `skillSources.<id>.revision`, preserving JSONC comments.
+3. Clones every resulting pin and validates all discoverable skill manifests.
+4. Runs typecheck, tests, and build.
+5. Creates or updates `chore/update-skill-source-revisions` and its pull request.
+
+The workflow never force-pushes or writes directly to the default branch. It
+uses the repository `GITHUB_TOKEN`, so the repository setting that permits
+GitHub Actions to create pull requests must be enabled.
+
+Run the same operations locally with:
+
+```bash
+bun run registry:update --dry-run
+bun run registry:update
+bun run registry:validate --concurrency 3
+```
+
+`registry:update:check` exits non-zero when any pin is stale, which is useful
+for external CI policies that want detection without mutation.
 
 ## Profiles
 
@@ -334,6 +435,8 @@ disable or remove unrelated MCPs, rules, agents, or project skills.
   project config file.
 - Duplicate JSON keys and malformed catalog/config files fail closed.
 - MCP collisions are refused before a server can be enabled.
+- Plugin updates target only matching package entries and preserve unrelated
+  project plugins.
 - Vendor sources use HTTPS and immutable commits; Git credential prompts,
   submodules, and checkout hooks are disabled.
 - Skill symlinks, special files, traversal, oversized files, and oversized

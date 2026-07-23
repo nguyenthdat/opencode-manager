@@ -1,7 +1,7 @@
 {
   "name": "@nguyenthdat/opencode-manager",
-  "version": "0.2.0",
-  "description": "Project-scoped OpenCode TUI manager for MCPs, rules, standalone agents, agent teams, and skills.",
+  "version": "0.3.0",
+  "description": "Project-scoped OpenCode TUI manager for MCPs, plugins, rules, standalone agents, agent teams, and skills.",
   "keywords": [
     "agent-skills",
     "ai-agents",
@@ -17,6 +17,7 @@
     "mcp-registry",
     "model-context-protocol",
     "opencode-plugin",
+    "plugin-manager",
     "registry",
     "rule-manager",
     "rules",
@@ -58,6 +59,9 @@
   "scripts": {
     "build": "tsc",
     "clean": "rm -rf dist",
+    "registry:update": "bun scripts/update-skill-source-revisions.ts",
+    "registry:update:check": "bun scripts/update-skill-source-revisions.ts --check",
+    "registry:validate": "bun scripts/validate-skill-sources.ts",
     "test": "bun test",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
   },

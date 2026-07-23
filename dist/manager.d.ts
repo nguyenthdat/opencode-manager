@@ -5,6 +5,12 @@ export interface McpRegistryEntry {
     tags: string[];
     config: JsonObject;
 }
+export interface PluginRegistryEntry {
+    title: string;
+    description: string;
+    tags: string[];
+    package: string;
+}
 export interface FileRegistryEntry {
     title: string;
     description: string;
@@ -20,6 +26,7 @@ export interface LocalSkillSource {
     path: string;
     skillsPath: string;
     license?: string;
+    ignoreSymlinks?: boolean;
 }
 export interface GitSkillSource {
     type: "git";
@@ -28,6 +35,7 @@ export interface GitSkillSource {
     revision: string;
     skillsPath: string;
     license?: string;
+    ignoreSymlinks?: boolean;
 }
 export type SkillSource = LocalSkillSource | GitSkillSource;
 export interface ProfileSkillRef {
@@ -47,6 +55,7 @@ export interface RegistryProfile {
 export interface RegistryCatalog {
     version: 1;
     mcps: Record<string, McpRegistryEntry>;
+    plugins: Record<string, PluginRegistryEntry>;
     skillSources: Record<string, SkillSource>;
     rules: Record<string, FileRegistryEntry>;
     agents: Record<string, AgentRegistryEntry>;
@@ -57,6 +66,7 @@ export interface ManagerOptions {
     catalogPath?: string;
     effectiveMcp?: Record<string, unknown>;
     effectiveAgent?: Record<string, unknown>;
+    effectivePlugin?: readonly unknown[];
 }
 export interface MutationOptions {
     override?: boolean;
@@ -68,6 +78,12 @@ export interface McpStatus {
     description: string;
     tags: string[];
     type: "local" | "remote";
+    enabled: boolean;
+    status: ResourceStatus;
+    ownership: "manager" | "project" | "inherited" | "absent";
+}
+export interface PluginStatus extends PluginRegistryEntry {
+    id: string;
     enabled: boolean;
     status: ResourceStatus;
     ownership: "manager" | "project" | "inherited" | "absent";
@@ -118,9 +134,12 @@ export interface ProfileDetail {
 export declare function loadCatalog(options?: Pick<ManagerOptions, "catalogPath">): Promise<RegistryCatalog>;
 export declare function listMcps(options: ManagerOptions): Promise<McpStatus[]>;
 export declare function setMcpEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<McpStatus>;
+export declare function listPlugins(options: ManagerOptions): Promise<PluginStatus[]>;
+export declare function setPluginEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<PluginStatus>;
 export declare function listSkillSources(options: ManagerOptions): Promise<SkillSourceStatus[]>;
 export declare function listSkills(options: ManagerOptions, sourceID: string): Promise<SkillStatus[]>;
 export declare function setSkillEnabled(options: ManagerOptions, sourceID: string, skillPath: string, enabled: boolean, mutation?: MutationOptions): Promise<SkillStatus>;
+export declare function setSkillSourceEnabled(options: ManagerOptions, sourceID: string, enabled: boolean, mutation?: MutationOptions): Promise<SkillStatus[]>;
 export declare function listRules(options: ManagerOptions): Promise<RuleStatus[]>;
 export declare function setRuleEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<RuleStatus>;
 export declare function listAgents(options: ManagerOptions): Promise<AgentStatus[]>;

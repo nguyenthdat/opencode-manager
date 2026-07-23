@@ -2,7 +2,7 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 const DEFAULT_CATALOG = fileURLToPath(new URL("../registry/catalog.jsonc", import.meta.url));
 function isSelection(value) {
-    return ["profile", "mcp", "skill", "rule", "agent"].includes(value.type);
+    return ["profile", "mcp", "plugin", "skill-source", "skill", "rule", "agent"].includes(value.type);
 }
 export function resolveProjectRoot(worktree, directory) {
     return resolve(worktree && worktree !== "/" ? worktree : directory);
@@ -13,11 +13,13 @@ function errorMessage(error) {
 function options(state) {
     const mcp = state.api.state.config?.mcp;
     const agent = state.api.state.config?.agent;
+    const plugin = state.api.state.config?.plugin;
     return {
         projectRoot: state.projectRoot,
         catalogPath: state.catalogPath,
         effectiveMcp: mcp && typeof mcp === "object" && !Array.isArray(mcp) ? mcp : undefined,
         effectiveAgent: agent && typeof agent === "object" && !Array.isArray(agent) ? agent : undefined,
+        effectivePlugin: Array.isArray(plugin) ? [...plugin] : undefined,
     };
 }
 async function manager() {
@@ -42,6 +44,9 @@ function mcpFooter(state, mcp) {
     if (live.status === "failed" && live.error)
         return `enabled · failed: ${live.error}`;
     return `enabled · ${live.status.replaceAll("_", " ")} · ${mcp.ownership}`;
+}
+function pluginFooter(plugin) {
+    return `${plugin.status} · ${plugin.ownership} · ${plugin.package}`;
 }
 function skillFooter(skill) {
     const nested = skill.nestedSkills ? ` · includes ${skill.nestedSkills} nested` : "";
@@ -96,6 +101,12 @@ async function showManager(state) {
                 category: "Registries",
             },
             {
+                title: "Plugin Registry",
+                value: { type: "plugins" },
+                description: "Manage project-local OpenCode plugins",
+                category: "Registries",
+            },
+            {
                 title: "Rule Registry",
                 value: { type: "rules" },
                 description: "Install project instructions and keep project config references in sync",
@@ -117,7 +128,7 @@ async function showManager(state) {
         ];
         replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
             title: "Project Stack Manager",
-            placeholder: "Search profiles, MCPs, rules, agents, or skills",
+            placeholder: "Search profiles, MCPs, plugins, rules, agents, or skills",
             options: rows,
             onMove() {
                 state.selection = undefined;
@@ -130,6 +141,8 @@ async function showManager(state) {
                     void showProfile(state, option.value.profile.id);
                 if (option.value.type === "mcps")
                     void showMcps(state);
+                if (option.value.type === "plugins")
+                    void showPlugins(state);
                 if (option.value.type === "rules")
                     void showRules(state);
                 if (option.value.type === "agents")
@@ -247,6 +260,43 @@ async function showMcps(state) {
         state.api.ui.toast({ variant: "error", message: errorMessage(error) });
     }
 }
+async function showPlugins(state) {
+    try {
+        const api = await manager();
+        const plugins = await api.listPlugins(options(state));
+        const parent = () => showPlugins(state);
+        const rows = [
+            navigation("Back to manager"),
+            ...plugins.map((plugin) => ({
+                title: plugin.title,
+                value: { type: "plugin", plugin, parent },
+                description: `${plugin.description} [${plugin.id}]`,
+                footer: pluginFooter(plugin),
+                category: plugin.tags[0] ?? "Plugins",
+            })),
+        ];
+        replaceDialog(state, undefined, () => state.api.ui.DialogSelect({
+            title: "Plugin Registry",
+            placeholder: "Search OpenCode plugins · Enter/Space toggles",
+            options: rows,
+            onMove(option) {
+                state.selection = isSelection(option.value) ? option.value : undefined;
+            },
+            onFilter() {
+                state.selection = undefined;
+            },
+            onSelect(option) {
+                if (option.value.type === "back")
+                    void showManager(state);
+                else if (isSelection(option.value))
+                    confirmToggle(state, option.value);
+            },
+        }));
+    }
+    catch (error) {
+        state.api.ui.toast({ variant: "error", message: errorMessage(error) });
+    }
+}
 async function showRules(state) {
     try {
         const api = await manager();
@@ -333,8 +383,18 @@ async function showSource(state, sourceID) {
         if (!source)
             throw new Error(`Unknown skill source ${sourceID}`);
         const parent = () => showSource(state, sourceID);
+        const installed = skills.filter((skill) => skill.status === "managed" || skill.status === "modified").length;
         const rows = [
             navigation("Back to manager"),
+            ...(skills.length > 1
+                ? [{
+                        title: `All skills (${skills.length})`,
+                        value: { type: "skill-source", source, skills, parent },
+                        description: "Install every skill from this source, or remove every manager-owned install",
+                        footer: `${installed}/${skills.length} installed`,
+                        category: "Bulk Actions",
+                    }]
+                : []),
             ...skills.map((skill) => ({
                 title: skill.name,
                 value: { type: "skill", skill, parent },
@@ -374,6 +434,12 @@ function selectionEnabled(selection) {
         return selection.profile.status === "enabled";
     if (selection.type === "mcp")
         return selection.mcp.enabled;
+    if (selection.type === "plugin")
+        return selection.plugin.enabled;
+    if (selection.type === "skill-source") {
+        return selection.skills.length > 0
+            && selection.skills.every((skill) => skill.status === "managed" || skill.status === "modified");
+    }
     if (selection.type === "skill")
         return selection.skill.status === "managed" || selection.skill.status === "modified";
     if (selection.type === "rule")
@@ -387,6 +453,10 @@ function selectionLabel(selection) {
         return selection.profile.title;
     if (selection.type === "mcp")
         return selection.mcp.title;
+    if (selection.type === "plugin")
+        return selection.plugin.title;
+    if (selection.type === "skill-source")
+        return `all ${selection.source.title} skills`;
     if (selection.type === "skill")
         return selection.skill.name;
     if (selection.type === "rule")
@@ -405,11 +475,18 @@ function activeSessionBusy(api) {
     const status = api.state.session.status(sessionID);
     return status?.type === "busy" || status?.type === "retry";
 }
-function selectionConflict(selection) {
+function selectionConflict(selection, enabled) {
     if (selection.type === "profile")
         return selection.profile.status === "conflict";
     if (selection.type === "mcp")
         return selection.mcp.status === "conflict";
+    if (selection.type === "plugin")
+        return selection.plugin.status === "conflict";
+    if (selection.type === "skill-source") {
+        return selection.skills.some((skill) => enabled
+            ? skill.status === "conflict" || skill.status === "modified"
+            : skill.status === "modified");
+    }
     if (selection.type === "skill")
         return selection.skill.status === "conflict" || selection.skill.status === "modified";
     if (selection.type === "rule")
@@ -419,19 +496,29 @@ function selectionConflict(selection) {
 function confirmToggle(state, selection, forcedEnabled) {
     const enabled = forcedEnabled ?? !selectionEnabled(selection);
     const label = selectionLabel(selection);
-    const scope = selection.type === "profile" ? "Every registry resource in this profile" : "This resource";
-    const hasConflict = selectionConflict(selection);
+    const scope = selection.type === "profile"
+        ? "Every registry resource in this profile"
+        : selection.type === "skill-source"
+            ? `Every skill in this source (${selection.skills.length})`
+            : "This resource";
+    const hasConflict = selectionConflict(selection, enabled);
     const conflict = selection.type === "mcp" && selection.mcp.status === "conflict"
         ? "\n\nThis MCP conflicts with an existing definition and the operation will be refused."
-        : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
-            ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
-            : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
-                ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
-                : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
-                    ? selection.agent.ownership === "inherited"
-                        ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
-                        : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
-                    : "";
+        : selection.type === "plugin" && selection.plugin.status === "conflict"
+            ? "\n\nThis plugin has a different version or options; an approved replacement or removal is backed up first."
+            : selection.type === "plugin" && selection.plugin.ownership === "inherited" && !enabled
+                ? "\n\nInherited plugins cannot be disabled project-locally; remove it from the parent or global config."
+                : selection.type === "skill-source" && hasConflict
+                    ? "\n\nOne or more skills conflict with or were modified in the project; approved replacements or removals are archived first."
+                    : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
+                        ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
+                        : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
+                            ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
+                            : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
+                                ? selection.agent.ownership === "inherited"
+                                    ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
+                                    : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
+                                : "";
     const busy = activeSessionBusy(state.api)
         ? "\n\nThe active session is busy and may be interrupted when OpenCode reloads."
         : "";
@@ -465,6 +552,12 @@ async function applyToggle(state, selection, enabled, override) {
         }
         else if (selection.type === "mcp") {
             await api.setMcpEnabled(options(state), selection.mcp.id, enabled, { override });
+        }
+        else if (selection.type === "plugin") {
+            await api.setPluginEnabled(options(state), selection.plugin.id, enabled, { override });
+        }
+        else if (selection.type === "skill-source") {
+            await api.setSkillSourceEnabled(options(state), selection.source.id, enabled, { override });
         }
         else if (selection.type === "skill") {
             await api.setSkillEnabled(options(state), selection.skill.source, selection.skill.path, enabled, { override });

@@ -4,20 +4,24 @@ import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "jsonc-parser";
+import { updateSkillSourceRevisions } from "../scripts/update-skill-source-revisions.ts";
 import plugin, { resolveProjectRoot } from "../src/tui.ts";
 import {
   getProfile,
   listAgents,
   listMcps,
+  listPlugins,
   listProfiles,
   listRules,
   listSkills,
   loadCatalog,
   setAgentEnabled,
   setMcpEnabled,
+  setPluginEnabled,
   setProfileEnabled,
   setRuleEnabled,
   setSkillEnabled,
+  setSkillSourceEnabled,
 } from "../src/manager.ts";
 
 const temporaryRoots: string[] = [];
@@ -98,6 +102,14 @@ async function fixture() {
             },
           },
         },
+        plugins: {
+          fixture: {
+            title: "Fixture Plugin",
+            description: "Fixture OpenCode plugin.",
+            tags: ["test"],
+            package: "@fixture/opencode",
+          },
+        },
         skillSources: {
           custom: {
             type: "local",
@@ -157,14 +169,46 @@ async function fixture() {
 }
 
 describe("registry", () => {
-  test("loads the bundled MCP and vendor skill registries", async () => {
+  test("loads the bundled MCP, plugin, and vendor skill registries", async () => {
     const catalog = await loadCatalog();
     expect(Object.keys(catalog.mcps).length).toBeGreaterThan(30);
     expect(catalog.mcps.github?.config.type).toBe("remote");
     expect(catalog.mcps.aws?.config.environment).toBeDefined();
+    expect(catalog.plugins.svelte?.package).toBe("@sveltejs/opencode");
     const cloudflare = catalog.skillSources.cloudflare;
     expect(cloudflare?.type).toBe("git");
     expect(cloudflare?.type === "git" ? cloudflare.revision : "").toMatch(/^[a-f0-9]{40}$/);
+    const hallmark = catalog.skillSources.hallmark;
+    expect(hallmark).toMatchObject({ type: "git", skillsPath: "skills", license: "MIT" });
+    expect(hallmark?.type === "git" ? hallmark.revision : "").toMatch(/^[a-f0-9]{40}$/);
+    expect(catalog.profiles.find((profile) => profile.id === "hallmark")?.skills).toEqual([
+      { source: "hallmark", path: "hallmark" },
+    ]);
+    const vercel = catalog.skillSources.vercel;
+    expect(vercel).toMatchObject({ type: "git", skillsPath: "skills", license: "MIT" });
+    expect(vercel?.type === "git" ? vercel.revision : "").toMatch(/^[a-f0-9]{40}$/);
+    const requestedSources = {
+      "k-dense-scientific": { skillsPath: "skills" },
+      "pm-skills": { skillsPath: ".", license: "MIT" },
+      "marketing-skills": { skillsPath: "skills", license: "MIT" },
+      "addy-agent-skills": { skillsPath: "skills", license: "MIT" },
+      "microsoft-core": { skillsPath: ".github/skills", license: "MIT", ignoreSymlinks: true },
+      microsoft: { skillsPath: ".github/plugins", license: "MIT", ignoreSymlinks: true },
+      qt: { skillsPath: "skills", license: "LicenseRef-Qt-Commercial OR BSD-3-Clause" },
+      huggingface: { skillsPath: "skills", license: "Apache-2.0" },
+      finance: { skillsPath: "plugins", license: "MIT" },
+      "marketcalls-vectorbt": { skillsPath: ".claude/skills", license: "MIT" },
+      "agiprolabs-trading": { skillsPath: "skills", license: "MIT" },
+      okx: { skillsPath: "skills", license: "MIT" },
+    } as const;
+    for (const [id, expected] of Object.entries(requestedSources)) {
+      const source = catalog.skillSources[id];
+      expect(source).toMatchObject({ type: "git", ...expected });
+      expect(source?.type === "git" ? source.revision : "").toMatch(/^[a-f0-9]{40}$/);
+    }
+    expect(catalog.skillSources["pm-skills"]?.type === "git"
+      ? catalog.skillSources["pm-skills"].repository
+      : "").toBe("https://github.com/phuryn/pm-skills.git");
     expect(catalog.profiles.some((profile) => profile.id === "qdrant")).toBe(true);
     expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
     expect(catalog.agents["review-team"]?.type).toBe("team");
@@ -175,6 +219,57 @@ describe("registry", () => {
     const value = await fixture();
     await writeFile(value.catalogPath, `{"version":1,"mcps":{},"mcps":{},"skillSources":{},"profiles":[]}`);
     await expect(loadCatalog({ catalogPath: value.catalogPath })).rejects.toThrow("Duplicate JSON property");
+  });
+
+  test("updates duplicate-repository revisions once while preserving JSONC comments", async () => {
+    const root = await mkdtemp(join(tmpdir(), "opencode-manager-update-test-"));
+    temporaryRoots.push(root);
+    const catalogPath = join(root, "catalog.jsonc");
+    const previous = "a".repeat(40);
+    const revision = "b".repeat(40);
+    await writeFile(
+      catalogPath,
+      `{
+  "version": 1,
+  "mcps": {},
+  "plugins": {},
+  "skillSources": {
+    // keep this source comment
+    "one": {
+      "type": "git",
+      "title": "One",
+      "repository": "https://github.com/example/skills.git",
+      "revision": "${previous}",
+      "skillsPath": "skills"
+    },
+    "two": {
+      "type": "git",
+      "title": "Two",
+      "repository": "https://github.com/example/skills.git",
+      "revision": "${previous}",
+      "skillsPath": "other-skills"
+    }
+  },
+  "profiles": []
+}
+`,
+    );
+    let resolutions = 0;
+    const changes = await updateSkillSourceRevisions({
+      catalogPath,
+      resolveRevision: async () => {
+        resolutions += 1;
+        return revision.toUpperCase();
+      },
+    });
+
+    expect(resolutions).toBe(1);
+    expect(changes.map((change) => change.id)).toEqual(["one", "two"]);
+    const source = await readFile(catalogPath, "utf8");
+    expect(source).toContain("// keep this source comment");
+    const catalog = parse(source);
+    expect(catalog.skillSources.one.revision).toBe(revision);
+    expect(catalog.skillSources.two.revision).toBe(revision);
   });
 
   test("treats constructor as a normal absent resource id", async () => {
@@ -395,6 +490,95 @@ describe("project MCP registry", () => {
   });
 });
 
+describe("project plugin registry", () => {
+  test("adds and removes one package while preserving unrelated JSONC", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    const configFile = join(configDir, "opencode.jsonc");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      configFile,
+      `{
+  // keep this project setting
+  "share": "manual",
+  "plugin": [
+    // keep this unrelated plugin
+    "existing-plugin",
+  ],
+}
+`,
+    );
+
+    const enabled = await setPluginEnabled(value.options, "fixture", true);
+    expect(enabled).toMatchObject({ enabled: true, status: "enabled", ownership: "manager" });
+    let source = await readFile(configFile, "utf8");
+    expect(source).toContain("// keep this project setting");
+    expect(source).toContain("// keep this unrelated plugin");
+    expect(parse(source).plugin).toEqual(["existing-plugin", "@fixture/opencode"]);
+
+    const disabled = await setPluginEnabled(value.options, "fixture", false);
+    expect(disabled).toMatchObject({ enabled: false, status: "absent", ownership: "absent" });
+    source = await readFile(configFile, "utf8");
+    expect(source).toContain("// keep this unrelated plugin");
+    expect(parse(source).plugin).toEqual(["existing-plugin"]);
+  });
+
+  test("reports inherited plugins and refuses to disable them project-locally", async () => {
+    const value = await fixture();
+    const options = { ...value.options, effectivePlugin: ["@fixture/opencode"] };
+    expect((await listPlugins(options))[0]).toMatchObject({
+      enabled: true,
+      status: "enabled",
+      ownership: "inherited",
+    });
+    await expect(setPluginEnabled(options, "fixture", false)).rejects.toThrow("cannot be disabled from this project");
+    await setPluginEnabled(options, "fixture", true);
+    expect(await exists(join(value.projectRoot, ".opencode", "opencode.jsonc"))).toBe(false);
+  });
+
+  test("backs up a configured package before an approved replacement", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(
+      join(configDir, "opencode.jsonc"),
+      `${JSON.stringify({ plugin: [["@fixture/opencode", { mode: "custom" }], "existing-plugin"] }, null, 2)}\n`,
+    );
+
+    expect((await listPlugins(value.options))[0]?.status).toBe("conflict");
+    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow("conflicts with the registry package");
+    const enabled = await setPluginEnabled(value.options, "fixture", true, { override: true });
+    expect(enabled).toMatchObject({ status: "enabled", ownership: "manager" });
+    const config = parse(await readFile(join(configDir, "opencode.jsonc"), "utf8"));
+    expect(config.plugin).toEqual(["existing-plugin", "@fixture/opencode"]);
+    const backups = await readdir(join(configDir, ".opencode-manager", "backups", "plugins"));
+    expect(backups.some((name) => name.startsWith("fixture-"))).toBe(true);
+  });
+
+  test("replaces the previously managed package when a registry entry changes", async () => {
+    const value = await fixture();
+    await setPluginEnabled(value.options, "fixture", true);
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.plugins.fixture.package = "@fixture/opencode-next";
+    await writeFile(value.catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+
+    expect((await listPlugins(value.options))[0]).toMatchObject({ enabled: true, status: "conflict" });
+    await expect(setPluginEnabled(value.options, "fixture", true)).rejects.toThrow("modified after manager installation");
+    const updated = await setPluginEnabled(value.options, "fixture", true, { override: true });
+    expect(updated).toMatchObject({ enabled: true, status: "enabled", ownership: "manager" });
+    const config = parse(await readFile(join(value.projectRoot, ".opencode", "opencode.jsonc"), "utf8"));
+    expect(config.plugin).toEqual(["@fixture/opencode-next"]);
+  });
+
+  test("rejects malformed project plugin entries", async () => {
+    const value = await fixture();
+    const configDir = join(value.projectRoot, ".opencode");
+    await mkdir(configDir, { recursive: true });
+    await writeFile(join(configDir, "opencode.jsonc"), `{"plugin":[42]}\n`);
+    await expect(listPlugins(value.options)).rejects.toThrow("package strings or [package, options] tuples");
+  });
+});
+
 describe("project skill registry", () => {
   test("installs a complete bundle and protects local modifications", async () => {
     const value = await fixture();
@@ -440,10 +624,66 @@ describe("project skill registry", () => {
     expect(await readFile(join(backupRoot, backups[0]!, "SKILL.md"), "utf8")).toBe("user-owned skill\n");
   });
 
+  test("installs and removes every skill in a source as one operation", async () => {
+    const value = await fixture();
+    const secondSkill = join(value.registry, "skills", "second-skill");
+    await mkdir(secondSkill);
+    await writeFile(
+      join(secondSkill, "SKILL.md"),
+      `---\nname: second-skill\ndescription: Use when testing bulk skill source operations.\n---\n\n# Second\n`,
+    );
+
+    const installed = await setSkillSourceEnabled(value.options, "custom", true);
+    expect(installed.map((skill) => [skill.name, skill.status])).toEqual([
+      ["fixture-skill", "managed"],
+      ["second-skill", "managed"],
+    ]);
+    expect(await exists(join(value.projectRoot, ".opencode", "skills", "fixture-skill"))).toBe(true);
+    expect(await exists(join(value.projectRoot, ".opencode", "skills", "second-skill"))).toBe(true);
+
+    const removed = await setSkillSourceEnabled(value.options, "custom", false);
+    expect(removed.every((skill) => skill.status === "absent")).toBe(true);
+    expect(await exists(join(value.projectRoot, ".opencode", "skills", "fixture-skill"))).toBe(false);
+    expect(await exists(join(value.projectRoot, ".opencode", "skills", "second-skill"))).toBe(false);
+  });
+
+  test("preflights source conflicts before a bulk install", async () => {
+    const value = await fixture();
+    const secondSkill = join(value.registry, "skills", "second-skill");
+    await mkdir(secondSkill);
+    await writeFile(
+      join(secondSkill, "SKILL.md"),
+      `---\nname: second-skill\ndescription: Use when testing bulk conflict handling.\n---\n\n# Second\n`,
+    );
+    const conflict = join(value.projectRoot, ".opencode", "skills", "fixture-skill");
+    await mkdir(conflict, { recursive: true });
+    await writeFile(join(conflict, "SKILL.md"), "user-owned skill\n");
+
+    await expect(setSkillSourceEnabled(value.options, "custom", true)).rejects.toThrow("confirm override");
+    expect(await exists(join(value.projectRoot, ".opencode", "skills", "second-skill"))).toBe(false);
+
+    const installed = await setSkillSourceEnabled(value.options, "custom", true, { override: true });
+    expect(installed.every((skill) => skill.status === "managed")).toBe(true);
+    const backups = await readdir(
+      join(value.projectRoot, ".opencode", ".opencode-manager", "backups", "skills", "override"),
+    );
+    expect(backups.some((name) => name.startsWith("fixture-skill-"))).toBe(true);
+  });
+
   test("rejects symlinks in a skill source", async () => {
     const value = await fixture();
     await symlink(join(value.root, "outside"), join(value.registry, "skills", "linked"));
     await expect(listSkills(value.options, "custom")).rejects.toThrow("contains symlink");
+  });
+
+  test("skips source-level symlink mirrors only when explicitly configured", async () => {
+    const value = await fixture();
+    await symlink(join(value.root, "outside"), join(value.registry, "skills", "linked"));
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.skillSources.custom.ignoreSymlinks = true;
+    await writeFile(value.catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+    const skills = await listSkills(value.options, "custom");
+    expect(skills.map((skill) => skill.name)).toEqual(["fixture-skill"]);
   });
 
   test("rejects a project skills directory that escapes through a symlink", async () => {
