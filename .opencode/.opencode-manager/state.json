@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "mcps": {},
+  "skills": {
+    "custom:typescript-coding": {
+      "source": "custom",
+      "sourcePath": "typescript-coding",
+      "name": "typescript-coding",
+      "digest": "69a49dc45760a4230823f31d7b705d4e26d8de960ca98f03a1d31e9a15d5e686"
+    }
+  }
+}
