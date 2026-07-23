@@ -196,11 +196,11 @@ describe("project MCP registry", () => {
   test("uses an enabled-only override for an exact inherited MCP", async () => {
     const value = await fixture();
     const catalog = await loadCatalog({ catalogPath: value.catalogPath });
-    const inherited = {
+    const inherited = new Proxy({
       ...catalog.mcps.docs?.config,
-      headers: { Authorization: "Bearer resolved-secret\nsecond-line" },
+      headers: new Proxy({ Authorization: "Bearer resolved-secret\nsecond-line" }, {}),
       enabled: false,
-    };
+    }, {});
     const options = { ...value.options, effectiveMcp: { docs: inherited } };
     await setMcpEnabled(options, "docs", true);
     const config = parse(await readFile(join(value.projectRoot, ".opencode", "opencode.jsonc"), "utf8"));

@@ -601,9 +601,7 @@ function hash(value: string | Buffer): string {
 
 function mcpDefinition(value: unknown): JsonObject | undefined {
   if (!isObject(value) || (value.type !== "local" && value.type !== "remote")) return undefined;
-  const copy = structuredClone(value);
-  delete copy.enabled;
-  return copy;
+  return Object.fromEntries(Object.entries(value).filter(([key]) => key !== "enabled"));
 }
 
 function mcpHash(value: unknown): string | undefined {
