@@ -1,0 +1,70 @@
+{
+  "name": "@nguyenthdat/opencode-manager",
+  "version": "0.1.0",
+  "description": "Project-scoped OpenCode TUI manager for grouped MCP servers and skills.",
+  "keywords": [
+    "opencode",
+    "tui",
+    "mcp",
+    "skills",
+    "registry"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nguyenthdat/opencode-manager.git"
+  },
+  "homepage": "https://github.com/nguyenthdat/opencode-manager#readme",
+  "bugs": {
+    "url": "https://github.com/nguyenthdat/opencode-manager/issues"
+  },
+  "author": "Dat Nguyen",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "bun@1.3.14",
+  "main": "./dist/manager.js",
+  "types": "./dist/manager.d.ts",
+  "exports": {
+    ".": { "types": "./dist/manager.d.ts", "import": "./dist/manager.js" },
+    "./manager": { "types": "./dist/manager.d.ts", "import": "./dist/manager.js" },
+    "./tui": { "types": "./dist/tui.d.ts", "import": "./dist/tui.js" }
+  },
+  "files": [
+    "dist/",
+    "registry/",
+    "README.md"
+  ],
+  "engines": {
+    "bun": ">=1.3.0",
+    "opencode": ">=1.18.4"
+  },
+  "scripts": {
+    "build": "tsc",
+    "clean": "rm -rf dist",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.test.json"
+  },
+  "dependencies": {
+    "jsonc-parser": "^3.3.1",
+    "yaml": "^2.8.0"
+  },
+  "peerDependencies": {
+    "@opencode-ai/plugin": ">=1.18.4"
+  },
+  "peerDependenciesMeta": {
+    "@opencode-ai/plugin": { "optional": true }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "overrides": {
+    "@babel/core": "7.29.7"
+  },
+  "devDependencies": {
+    "@opencode-ai/plugin": "1.18.4",
+    "@opentui/core": "^0.4.5",
+    "@opentui/keymap": "^0.4.5",
+    "@opentui/solid": "^0.4.5",
+    "@types/bun": "latest",
+    "typescript": "^5.9.2"
+  }
+}

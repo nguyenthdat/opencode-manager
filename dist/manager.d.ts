@@ -1,0 +1,101 @@
+type JsonObject = Record<string, unknown>;
+export interface McpRegistryEntry {
+    title: string;
+    description: string;
+    tags: string[];
+    config: JsonObject;
+}
+export interface LocalSkillSource {
+    type: "local";
+    title: string;
+    path: string;
+    skillsPath: string;
+    license?: string;
+}
+export interface GitSkillSource {
+    type: "git";
+    title: string;
+    repository: string;
+    revision: string;
+    skillsPath: string;
+    license?: string;
+}
+export type SkillSource = LocalSkillSource | GitSkillSource;
+export interface ProfileSkillRef {
+    source: string;
+    path: string;
+}
+export interface RegistryProfile {
+    id: string;
+    title: string;
+    description: string;
+    tags: string[];
+    mcps: string[];
+    skills: ProfileSkillRef[];
+}
+export interface RegistryCatalog {
+    version: 1;
+    mcps: Record<string, McpRegistryEntry>;
+    skillSources: Record<string, SkillSource>;
+    profiles: RegistryProfile[];
+}
+export interface ManagerOptions {
+    projectRoot: string;
+    catalogPath?: string;
+    effectiveMcp?: Record<string, unknown>;
+}
+export interface MutationOptions {
+    override?: boolean;
+}
+export type ResourceStatus = "absent" | "enabled" | "disabled" | "managed" | "modified" | "conflict";
+export interface McpStatus {
+    id: string;
+    title: string;
+    description: string;
+    tags: string[];
+    type: "local" | "remote";
+    enabled: boolean;
+    status: ResourceStatus;
+    ownership: "manager" | "project" | "inherited" | "absent";
+}
+export interface SkillStatus {
+    id: string;
+    source: string;
+    sourceTitle: string;
+    path: string;
+    name: string;
+    description: string;
+    nestedSkills: number;
+    revision?: string;
+    status: ResourceStatus;
+}
+export interface SkillSourceStatus {
+    id: string;
+    title: string;
+    type: SkillSource["type"];
+    repository?: string;
+    revision?: string;
+    license?: string;
+    installed: number;
+}
+export interface ProfileStatus extends RegistryProfile {
+    status: "enabled" | "disabled" | "partial" | "conflict";
+    enabledResources: number;
+    totalResources: number;
+}
+export interface ProfileDetail {
+    profile: ProfileStatus;
+    mcps: McpStatus[];
+    skills: SkillStatus[];
+}
+export declare function loadCatalog(options?: Pick<ManagerOptions, "catalogPath">): Promise<RegistryCatalog>;
+export declare function listMcps(options: ManagerOptions): Promise<McpStatus[]>;
+export declare function setMcpEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<McpStatus>;
+export declare function listSkillSources(options: ManagerOptions): Promise<SkillSourceStatus[]>;
+export declare function listSkills(options: ManagerOptions, sourceID: string): Promise<SkillStatus[]>;
+export declare function setSkillEnabled(options: ManagerOptions, sourceID: string, skillPath: string, enabled: boolean, mutation?: MutationOptions): Promise<SkillStatus>;
+export declare function listProfiles(options: ManagerOptions): Promise<ProfileStatus[]>;
+export declare function getProfile(options: ManagerOptions, profileID: string): Promise<ProfileDetail>;
+export declare function setProfileEnabled(options: ManagerOptions, profileID: string, enabled: boolean, mutation?: MutationOptions): Promise<ProfileDetail>;
+export {};
+//# sourceMappingURL=manager.d.ts.map
