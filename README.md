@@ -5,9 +5,11 @@ agents, agent teams, and skills that belong to each project. It combines
 repository-owned registries, pinned vendor skill sources, and reusable stack
 profiles.
 
-The manager never writes resources to OpenCode's global config. Resource files
-are materialized under the active worktree's `.opencode/` directory; project
-config references may be patched in an existing root config as described below.
+Normal manager resources never write to OpenCode's global config. Resource
+files are materialized under the active worktree's `.opencode/` directory;
+project config references may be patched in an existing root config as
+described below. Entries under **Installer Registry** are the explicit
+exception: the confirmation dialog identifies their global scope before setup.
 
 ## What it manages
 
@@ -15,6 +17,8 @@ config references may be patched in an existing root config as described below.
   `registry/catalog.jsonc`.
 - **Plugin registry:** reviewed OpenCode plugin packages added only to the
   active project's `plugin` config array.
+- **Installer registry:** pinned external tool suites that require their own
+  setup workflow, with explicit global-scope confirmation.
 - **Custom skills:** skills maintained in this repository under
   `registry/skills/<name>/SKILL.md`.
 - **Vendor skills:** reproducible, commit-pinned skill repositories from
@@ -102,6 +106,7 @@ The first screen contains:
 - Stack profiles, with the number of selected resources.
 - The complete MCP registry.
 - The project-local OpenCode plugin registry.
+- Pinned external installers such as gstack.
 - The project rule registry.
 - Standalone agents and folder-based agent teams.
 - Custom and vendor skill registries.
@@ -113,6 +118,18 @@ Inside a profile or registry:
 - `Ctrl+D` disables it.
 - Skill sources with multiple skills include an **All skills** action for
   installing or removing the complete source in one operation.
+
+Use `/manager-sync` or the **Sync Registry** action to fetch the latest catalog
+and registry assets without reinstalling the plugin. The TUI also checks in the
+background on startup, throttled to once every six hours. Updates are cloned
+into `$XDG_CACHE_HOME/opencode-manager/registry-sync/` (or `~/.cache/...`),
+validated against the Git checkout, and swapped atomically. A failed refresh
+keeps the last valid snapshot; without one, the TUI falls back to the catalog
+bundled with the installed package.
+
+Setting a custom `catalog` plugin option disables automatic remote sync so the
+manager never replaces an explicitly configured registry. Set `registrySync`
+to `false` to opt out while using the bundled catalog.
 
 Applying a change reloads the active OpenCode project instance once so MCP,
 rule, agent, and skill state is refreshed. If reload fails after files were
@@ -192,6 +209,37 @@ The bundled Svelte entry follows the official
 It supplies the Svelte MCP, Svelte skills, and the `svelte-file-editor`
 subagent.
 
+## Installer registry
+
+Installers cover external suites that cannot be represented as static
+project-local skill bundles:
+
+```jsonc
+{
+  "installers": {
+    "gstack": {
+      "type": "git",
+      "title": "gstack",
+      "description": "Pinned gstack setup for OpenCode.",
+      "tags": ["agents", "workflow"],
+      "repository": "https://github.com/garrytan/gstack.git",
+      "revision": "0123456789abcdef0123456789abcdef01234567",
+      "install": ["setup", "--host", "opencode", "--no-prefix", "--quiet"],
+      "cleanup": [{ "directory": ".config/opencode/skills", "prefix": "gstack" }],
+      "marker": ".config/opencode/skills/gstack/SKILL.md",
+      "license": "MIT",
+    },
+  },
+}
+```
+
+The manager clones the exact commit into the user's OpenCode Manager data
+directory and executes the declared repository-relative command without a
+shell. gstack then generates its OpenCode-specific skills and runtime links
+under `~/.config/opencode/skills/`. Removing it deletes only the declared
+`gstack` namespace from that directory, leaving gstack state and installs for
+other hosts untouched.
+
 ## Custom skill registry
 
 Create a normal OpenCode skill in this repository:
@@ -215,11 +263,12 @@ The TUI discovers it automatically under **OpenCode Manager Registry**. The
 entire skill directory, including scripts, references, assets, and nested
 skills, is copied as one bundle.
 
-The bundled registry currently includes 27 custom skills:
+The bundled registry currently includes 28 custom skills:
 
 - **Engineering workflows:** [`application-debugging`](registry/skills/application-debugging),
   [`native-binary-debugging`](registry/skills/native-binary-debugging),
   [`security-review`](registry/skills/security-review),
+  [`defender-xdr-hunting-analyst`](registry/skills/defender-xdr-hunting-analyst),
   [`software-architect`](registry/skills/software-architect),
   [`codebase-design`](registry/skills/codebase-design),
   [`design-patterns`](registry/skills/design-patterns), and

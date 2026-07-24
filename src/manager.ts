@@ -14,7 +14,8 @@ import {
   unlink,
   writeFile,
 } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { homedir } from "node:os";
+import { dirname, isAbsolute, join, posix, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   applyEdits,
@@ -40,7 +41,12 @@ const MAX_TREE_FILES = 2_000;
 const MAX_FILE_BYTES = 4 * 1024 * 1024;
 const MAX_TREE_BYTES = 32 * 1024 * 1024;
 const LOCK_TIMEOUT_MS = 10_000;
-const LOCK_STALE_MS = 5 * 60_000;
+const LOCK_STALE_MS = 30 * 60_000;
+const DEFAULT_REGISTRY_REPOSITORY = "https://github.com/nguyenthdat/opencode-manager.git";
+const DEFAULT_REGISTRY_REF = "main";
+const DEFAULT_REGISTRY_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const INSTALLER_COMMAND_TIMEOUT_MS = 20 * 60 * 1000;
+const MAX_COMMAND_OUTPUT_CHARS = 64 * 1024;
 
 type JsonObject = Record<string, unknown>;
 
@@ -56,6 +62,25 @@ export interface PluginRegistryEntry {
   description: string;
   tags: string[];
   package: string;
+}
+
+export interface InstallerRegistryEntry {
+  type: "git";
+  title: string;
+  description: string;
+  tags: string[];
+  repository: string;
+  revision: string;
+  install: string[];
+  uninstall?: string[];
+  cleanup: InstallerCleanupRule[];
+  marker: string;
+  license?: string;
+}
+
+export interface InstallerCleanupRule {
+  directory: string;
+  prefix: string;
 }
 
 export interface FileRegistryEntry {
@@ -110,13 +135,15 @@ export interface RegistryCatalog {
   version: 1;
   mcps: Record<string, McpRegistryEntry>;
   plugins: Record<string, PluginRegistryEntry>;
+  installers?: Record<string, InstallerRegistryEntry>;
   skillSources: Record<string, SkillSource>;
   rules: Record<string, FileRegistryEntry>;
   agents: Record<string, AgentRegistryEntry>;
   profiles: RegistryProfile[];
 }
 
-interface LoadedCatalog extends RegistryCatalog {
+interface LoadedCatalog extends Omit<RegistryCatalog, "installers"> {
+  installers: Record<string, InstallerRegistryEntry>;
   file: string;
   root: string;
 }
@@ -124,6 +151,8 @@ interface LoadedCatalog extends RegistryCatalog {
 export interface ManagerOptions {
   projectRoot: string;
   catalogPath?: string;
+  installerDataRoot?: string;
+  installerHome?: string;
   effectiveMcp?: Record<string, unknown>;
   effectiveAgent?: Record<string, unknown>;
   effectivePlugin?: readonly unknown[];
@@ -151,6 +180,28 @@ export interface PluginStatus extends PluginRegistryEntry {
   enabled: boolean;
   status: ResourceStatus;
   ownership: "manager" | "project" | "inherited" | "absent";
+}
+
+export interface InstallerStatus extends InstallerRegistryEntry {
+  id: string;
+  installed: boolean;
+  status: ResourceStatus;
+  ownership: "manager" | "external" | "absent";
+}
+
+export interface RegistrySyncResult {
+  catalogPath: string;
+  revision?: string;
+  status: "updated" | "current" | "stale";
+  error?: string;
+}
+
+export interface RegistrySyncSettings {
+  repository?: string;
+  ref?: string;
+  force?: boolean;
+  maxAgeMs?: number;
+  cacheRoot?: string;
 }
 
 export interface SkillStatus {
@@ -235,6 +286,29 @@ interface ManagerState {
   skills: Record<string, ManagedSkillState>;
   rules: Record<string, ManagedRuleState>;
   agents: Record<string, ManagedAgentState>;
+}
+
+interface InstallerState {
+  version: 1;
+  installers: Record<string, ManagedInstallerState>;
+}
+
+interface ManagedInstallerState {
+  entry: InstallerRegistryEntry;
+  home: string;
+  baseline: InstallerBaseline[];
+  pending: boolean;
+  marker?: InstallerMarkerState;
+}
+
+interface InstallerBaseline extends InstallerCleanupRule {
+  names: string[];
+}
+
+interface InstallerMarkerState {
+  kind: "file" | "symlink";
+  digest: string;
+  target?: string;
 }
 
 interface ProjectContext {
@@ -334,10 +408,11 @@ function parseJsonc(file: string, source: string): JsonObject {
 
 function safeRelativePath(value: unknown, label: string): string {
   const path = text(value, label).replaceAll("\\", "/");
-  if (isAbsolute(path) || path === ".." || path.startsWith("../") || path.includes("/../")) {
+  const normalized = posix.normalize(path);
+  if (isAbsolute(path) || normalized === ".." || normalized.startsWith("../")) {
     throw new Error(`[opencode-manager] ${label} must stay inside its registry root`);
   }
-  return path.replace(/^\.\//, "").replace(/\/$/, "");
+  return normalized.replace(/\/+$/, "") || ".";
 }
 
 function validateMcpConfig(id: string, input: unknown): JsonObject {
@@ -378,18 +453,73 @@ function validateMcpConfig(id: string, input: unknown): JsonObject {
   return structuredClone(input);
 }
 
-function validateRepository(value: unknown, id: string): string {
-  const repository = text(value, `skill source "${id}" repository`);
+function validateRepository(value: unknown, id: string, kind = "skill source"): string {
+  const repository = text(value, `${kind} "${id}" repository`);
   let url: URL;
   try {
     url = new URL(repository);
   } catch {
-    throw new Error(`[opencode-manager] Skill source "${id}" repository must be an HTTPS URL`);
+    throw new Error(`[opencode-manager] ${kind} "${id}" repository must be an HTTPS URL`);
   }
   if (url.protocol !== "https:" || url.username || url.password) {
-    throw new Error(`[opencode-manager] Skill source "${id}" repository must be an unauthenticated HTTPS URL`);
+    throw new Error(`[opencode-manager] ${kind} "${id}" repository must be an unauthenticated HTTPS URL`);
   }
   return repository;
+}
+
+function validateInstallerCommand(value: unknown, id: string, action: "install" | "uninstall"): string[] {
+  const command = stringList(value, `installer "${id}" ${action}`);
+  if (command.length === 0) throw new Error(`[opencode-manager] Installer "${id}" ${action} must not be empty`);
+  const executable = safeRelativePath(command[0], `installer "${id}" ${action} executable`);
+  if (executable === ".") throw new Error(`[opencode-manager] Installer "${id}" ${action} executable is invalid`);
+  return [executable, ...command.slice(1)];
+}
+
+function validateInstallerCleanup(value: unknown, id: string): InstallerCleanupRule[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error(`[opencode-manager] Installer "${id}" cleanup must be an array`);
+  return value.map((raw, index) => {
+    if (!isObject(raw)) throw new Error(`[opencode-manager] Installer "${id}" cleanup ${index} must be an object`);
+    const directory = safeRelativePath(raw.directory, `installer "${id}" cleanup ${index} directory`);
+    const prefix = text(raw.prefix, `installer "${id}" cleanup ${index} prefix`);
+    if (directory === "." || !ID_PATTERN.test(prefix)) {
+      throw new Error(`[opencode-manager] Installer "${id}" cleanup ${index} is invalid`);
+    }
+    return { directory, prefix };
+  });
+}
+
+function validateInstallerRegistry(value: unknown): Record<string, InstallerRegistryEntry> {
+  if (!isObject(value)) throw new Error("[opencode-manager] Registry installers must be an object");
+  const installers: Record<string, InstallerRegistryEntry> = {};
+  for (const [id, raw] of Object.entries(value)) {
+    if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error(`[opencode-manager] Invalid installer id "${id}"`);
+    if (raw.type !== "git") throw new Error(`[opencode-manager] Installer "${id}" type must be git`);
+    const revision = text(raw.revision, `installer "${id}" revision`).toLowerCase();
+    if (!REVISION_PATTERN.test(revision)) {
+      throw new Error(`[opencode-manager] Installer "${id}" revision must be a full commit SHA`);
+    }
+    const marker = safeRelativePath(raw.marker, `installer "${id}" marker`);
+    if (marker === ".") throw new Error(`[opencode-manager] Installer "${id}" marker is invalid`);
+    const cleanup = validateInstallerCleanup(raw.cleanup, id);
+    if (raw.uninstall === undefined && cleanup.length === 0) {
+      throw new Error(`[opencode-manager] Installer "${id}" requires uninstall or cleanup metadata`);
+    }
+    installers[id] = {
+      type: "git",
+      title: text(raw.title, `installer "${id}" title`),
+      description: text(raw.description, `installer "${id}" description`),
+      tags: stringList(raw.tags ?? [], `installer "${id}" tags`),
+      repository: validateRepository(raw.repository, id, "installer"),
+      revision,
+      install: validateInstallerCommand(raw.install, id, "install"),
+      ...(raw.uninstall === undefined ? {} : { uninstall: validateInstallerCommand(raw.uninstall, id, "uninstall") }),
+      cleanup,
+      marker,
+      ...(raw.license === undefined ? {} : { license: text(raw.license, `installer "${id}" license`) }),
+    };
+  }
+  return installers;
 }
 
 function validateFileRegistry(value: unknown, label: "rule" | "agent"): Record<string, FileRegistryEntry> {
@@ -444,6 +574,8 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
       config: validateMcpConfig(id, raw.config),
     };
   }
+
+  const installers = validateInstallerRegistry(value.installers ?? {});
 
   const plugins: Record<string, PluginRegistryEntry> = {};
   const pluginPackages = new Set<string>();
@@ -542,7 +674,7 @@ async function loadCatalogInternal(options: Pick<ManagerOptions, "catalogPath">)
     });
   }
 
-  return { version: 1, file, root: dirname(file), mcps, plugins, skillSources, rules, agents, profiles };
+  return { version: 1, file, root: dirname(file), mcps, plugins, installers, skillSources, rules, agents, profiles };
 }
 
 function isWithin(target: string, root: string): boolean {
@@ -749,10 +881,6 @@ async function reclaimStaleLock(file: string): Promise<boolean> {
     const pid = Number.parseInt(lines[0] ?? "", 10);
     const createdAt = Number.parseInt(lines[1] ?? "", 10);
     const age = Date.now() - (Number.isFinite(createdAt) ? createdAt : info.mtimeMs);
-    if (age >= LOCK_STALE_MS) {
-      await unlink(file);
-      return true;
-    }
     if (Number.isInteger(pid) && pid > 0) {
       try {
         process.kill(pid, 0);
@@ -760,14 +888,52 @@ async function reclaimStaleLock(file: string): Promise<boolean> {
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ESRCH") return false;
       }
-    } else if (Date.now() - info.mtimeMs < LOCK_TIMEOUT_MS) {
+    } else if (age < LOCK_STALE_MS) {
       return false;
     }
+    const current = await readFile(file, "utf8");
+    if (current !== source) return false;
     await unlink(file);
     return true;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return true;
     throw error;
+  }
+}
+
+async function withLockFile<T>(file: string, fn: () => Promise<T>): Promise<T> {
+  await mkdir(dirname(file), { recursive: true });
+  const started = Date.now();
+  const token = randomUUID();
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  while (!handle) {
+    try {
+      handle = await open(file, "wx", 0o600);
+      await handle.writeFile(`${process.pid}\n${Date.now()}\n${token}\n`);
+    } catch (error) {
+      if (handle) {
+        await handle.close().catch(() => undefined);
+        handle = undefined;
+        await unlink(file).catch(() => undefined);
+      }
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      if (await reclaimStaleLock(file)) continue;
+      if (Date.now() - started >= LOCK_TIMEOUT_MS) {
+        throw new Error(`[opencode-manager] Timed out waiting for lock ${file}`);
+      }
+      await Bun.sleep(50);
+    }
+  }
+  try {
+    return await fn();
+  } finally {
+    await handle.close();
+    try {
+      const source = await readFile(file, "utf8");
+      if (source.split(/\r?\n/)[2] === token) await unlink(file);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
   }
 }
 
@@ -787,27 +953,7 @@ async function withProjectLock<T>(context: ProjectContext, fn: () => Promise<T>)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
-  const started = Date.now();
-  let handle: Awaited<ReturnType<typeof open>> | undefined;
-  while (!handle) {
-    try {
-      handle = await open(context.lockFile, "wx", 0o600);
-      await handle.writeFile(`${process.pid}\n${Date.now()}\n`);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (await reclaimStaleLock(context.lockFile)) continue;
-      if (Date.now() - started >= LOCK_TIMEOUT_MS) {
-        throw new Error(`[opencode-manager] Timed out waiting for project lock ${context.lockFile}`);
-      }
-      await Bun.sleep(50);
-    }
-  }
-  try {
-    return await fn();
-  } finally {
-    await handle.close();
-    await unlink(context.lockFile).catch(() => undefined);
-  }
+  return withLockFile(context.lockFile, fn);
 }
 
 async function readConfigFile(file: string): Promise<ProjectConfig> {
@@ -1339,10 +1485,16 @@ function runGit(args: string[], cwd?: string, timeoutMs = 90_000): Promise<strin
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
-    const stdout: Buffer[] = [];
-    const stderr: Buffer[] = [];
-    child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
-    child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
+    let stdout = "";
+    let stderr = "";
+    const append = (current: string, chunk: Buffer): string =>
+      `${current}${chunk.toString("utf8")}`.slice(-MAX_COMMAND_OUTPUT_CHARS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk);
+    });
     const timer = setTimeout(() => child.kill("SIGTERM"), timeoutMs);
     child.on("error", (error) => {
       clearTimeout(timer);
@@ -1351,12 +1503,228 @@ function runGit(args: string[], cwd?: string, timeoutMs = 90_000): Promise<strin
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) {
-        resolvePromise(Buffer.concat(stdout).toString("utf8").trim());
+        resolvePromise(stdout.trim());
         return;
       }
-      const detail = Buffer.concat(stderr).toString("utf8").trim();
+      const detail = stderr.trim();
       rejectPromise(new Error(`[opencode-manager] git ${args[0] ?? "command"} failed${detail ? `: ${detail}` : ""}`));
     });
+  });
+}
+
+interface RegistrySyncMetadata {
+  repository: string;
+  ref: string;
+  revision: string;
+  checkedAt: number;
+}
+
+function validateRegistryRef(value: string): string {
+  const ref = value.trim();
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._/-]*$/.test(ref) || ref.includes("..") || ref.endsWith("/") || ref.endsWith(".")) {
+    throw new Error(`[opencode-manager] Invalid registry ref "${value}"`);
+  }
+  return ref;
+}
+
+async function readRegistrySyncMetadata(file: string): Promise<RegistrySyncMetadata | undefined> {
+  try {
+    const value = JSON.parse(await readFile(file, "utf8")) as unknown;
+    if (
+      !isObject(value) ||
+      typeof value.repository !== "string" ||
+      typeof value.ref !== "string" ||
+      typeof value.revision !== "string" ||
+      !REVISION_PATTERN.test(value.revision) ||
+      typeof value.checkedAt !== "number" ||
+      !Number.isFinite(value.checkedAt)
+    ) {
+      return undefined;
+    }
+    return {
+      repository: value.repository,
+      ref: value.ref,
+      revision: value.revision,
+      checkedAt: value.checkedAt,
+    };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || error instanceof SyntaxError) return undefined;
+    throw error;
+  }
+}
+
+async function validateCatalogSnapshot(file: string): Promise<void> {
+  const catalog = await loadCatalogInternal({ catalogPath: file });
+  const localSkillPaths = new Map<string, Set<string>>();
+  await Promise.all([
+    ...Object.entries(catalog.rules).map(([id, entry]) => registryFile(catalog, entry, `Rule "${id}"`)),
+    ...Object.entries(catalog.agents).map(async ([id, entry]) => agentBundle(catalog, id, entry)),
+  ]);
+  for (const [id, source] of Object.entries(catalog.skillSources)) {
+    if (source.type !== "local") continue;
+    const sourceRoot = resolve(catalog.root, source.path);
+    const canonicalSourceRoot = await realpath(sourceRoot);
+    if (!isWithin(canonicalSourceRoot, await realpath(catalog.root))) {
+      throw new Error(`[opencode-manager] Local skill source "${id}" escapes the registry root`);
+    }
+    const skillsRoot = await realpath(resolve(canonicalSourceRoot, source.skillsPath));
+    if (!isWithin(skillsRoot, canonicalSourceRoot)) {
+      throw new Error(`[opencode-manager] Skill source "${id}" skillsPath escapes its source root`);
+    }
+    const discovered = await discoverSkillDirectories(skillsRoot, source.ignoreSymlinks);
+    const directorySet = new Set(discovered);
+    const topLevel = discovered.filter((directory) => {
+      let parent = dirname(directory);
+      while (isWithin(parent, skillsRoot) && parent !== skillsRoot) {
+        if (directorySet.has(parent)) return false;
+        parent = dirname(parent);
+      }
+      return true;
+    });
+    localSkillPaths.set(
+      id,
+      new Set(topLevel.map((directory) => relative(skillsRoot, directory).split(sep).join("/") || ".")),
+    );
+    const names = new Set<string>();
+    for (const directory of discovered) {
+      const manifest = parseSkillFrontmatter(
+        join(directory, "SKILL.md"),
+        await readFile(join(directory, "SKILL.md"), "utf8"),
+      );
+      if (topLevel.includes(directory) && names.has(manifest.name)) {
+        throw new Error(`[opencode-manager] Skill source "${id}" has duplicate name "${manifest.name}"`);
+      }
+      if (topLevel.includes(directory)) names.add(manifest.name);
+    }
+  }
+  for (const profile of catalog.profiles) {
+    for (const skill of profile.skills) {
+      const paths = localSkillPaths.get(skill.source);
+      if (paths && !paths.has(skill.path)) {
+        throw new Error(
+          `[opencode-manager] Profile "${profile.id}" references missing local skill "${skill.source}:${skill.path}"`,
+        );
+      }
+    }
+  }
+}
+
+async function validCachedRegistry(
+  snapshot: string,
+  repository: string,
+  ref: string,
+  metadata: RegistrySyncMetadata | undefined,
+): Promise<RegistrySyncMetadata | undefined> {
+  try {
+    if (
+      !metadata ||
+      metadata.repository !== repository ||
+      metadata.ref !== ref ||
+      metadata.checkedAt > Date.now() + 60_000
+    ) {
+      return undefined;
+    }
+    const info = await lstat(snapshot);
+    if (info.isSymbolicLink() || !info.isDirectory()) return undefined;
+    const [head, status, origin] = await Promise.all([
+      runGit(["-C", snapshot, "rev-parse", "HEAD"]),
+      runGit(["-C", snapshot, "status", "--porcelain", "--untracked-files=all", "--ignored=matching"]),
+      runGit(["-C", snapshot, "remote", "get-url", "origin"]),
+      validateCatalogSnapshot(join(snapshot, "registry", "catalog.jsonc")),
+    ]);
+    if (head !== metadata.revision || status !== "" || origin !== repository) return undefined;
+    return metadata;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function syncRegistry(
+  options: Pick<ManagerOptions, "projectRoot">,
+  settings: RegistrySyncSettings = {},
+): Promise<RegistrySyncResult> {
+  void options;
+  const repository = validateRepository(settings.repository ?? DEFAULT_REGISTRY_REPOSITORY, "remote", "registry");
+  const ref = validateRegistryRef(settings.ref ?? DEFAULT_REGISTRY_REF);
+  const maxAgeMs = settings.maxAgeMs ?? DEFAULT_REGISTRY_MAX_AGE_MS;
+  if (!Number.isFinite(maxAgeMs) || maxAgeMs < 0) {
+    throw new Error("[opencode-manager] Registry sync maxAgeMs must be a non-negative number");
+  }
+
+  const cacheHome = process.env.XDG_CACHE_HOME?.trim() || join(homedir(), ".cache");
+  const requestedCacheRoot = resolve(settings.cacheRoot ?? join(cacheHome, "opencode-manager", "registry-sync"));
+  await mkdir(requestedCacheRoot, { recursive: true });
+  const cacheInfo = await lstat(requestedCacheRoot);
+  if (cacheInfo.isSymbolicLink() || !cacheInfo.isDirectory()) {
+    throw new Error("[opencode-manager] Registry cache root must be a regular directory");
+  }
+  const cacheRoot = await realpath(requestedCacheRoot);
+  const sourceKey = createHash("sha256").update(`${repository}\0${ref}`).digest("hex").slice(0, 24);
+  const syncDir = await ensureContainedDirectory(join(cacheRoot, sourceKey), cacheRoot, "registry sync cache");
+
+  return withLockFile(join(syncDir, "sync.lock"), async () => {
+    const metadataFile = join(syncDir, "current.json");
+    const current = await readRegistrySyncMetadata(metadataFile);
+    const currentSnapshot = current ? join(syncDir, "snapshots", current.revision) : "";
+    const cached = currentSnapshot ? await validCachedRegistry(currentSnapshot, repository, ref, current) : undefined;
+    const cachedCatalogPath = cached ? join(currentSnapshot, "registry", "catalog.jsonc") : undefined;
+    if (!settings.force && cached && Date.now() - cached.checkedAt < maxAgeMs) {
+      return { catalogPath: cachedCatalogPath!, revision: cached.revision, status: "current" };
+    }
+
+    const temporary = join(syncDir, `checkout.${process.pid}.${randomUUID()}.tmp`);
+    try {
+      await runGit(["clone", "--filter=blob:none", "--no-checkout", "--no-recurse-submodules", repository, temporary]);
+      await runGit(["-C", temporary, "fetch", "--depth", "1", "origin", ref]);
+      await runGit(["-C", temporary, "sparse-checkout", "init", "--cone"]);
+      await runGit(["-C", temporary, "sparse-checkout", "set", "registry"]);
+      await runGit(["-C", temporary, "checkout", "--detach", "FETCH_HEAD"]);
+      const [revision] = await Promise.all([
+        runGit(["-C", temporary, "rev-parse", "HEAD"]),
+        validateCatalogSnapshot(join(temporary, "registry", "catalog.jsonc")),
+      ]);
+      if (!REVISION_PATTERN.test(revision)) {
+        throw new Error(`[opencode-manager] Registry sync resolved invalid commit ${revision}`);
+      }
+      try {
+        await lstat(join(temporary, ".gitmodules"));
+        throw new Error("[opencode-manager] Registry repository contains unsupported submodules");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+
+      const snapshots = await ensureContainedDirectory(join(syncDir, "snapshots"), syncDir, "registry snapshots");
+      const snapshot = join(snapshots, revision);
+      if (await pathExists(snapshot)) {
+        const existing = await validCachedRegistry(snapshot, repository, ref, {
+          repository,
+          ref,
+          revision,
+          checkedAt: Date.now(),
+        });
+        if (!existing) throw new Error(`[opencode-manager] Invalid existing registry snapshot ${revision}`);
+        await rm(temporary, { recursive: true, force: true });
+      } else await rename(temporary, snapshot);
+      const metadata: RegistrySyncMetadata = { repository, ref, revision, checkedAt: Date.now() };
+      await writeAtomic(metadataFile, `${JSON.stringify(metadata, null, 2)}\n`, 0o600);
+      return {
+        catalogPath: join(snapshot, "registry", "catalog.jsonc"),
+        revision,
+        status: cached?.revision === revision ? "current" : "updated",
+      };
+    } catch (error) {
+      if (cached) {
+        return {
+          catalogPath: cachedCatalogPath!,
+          revision: cached.revision,
+          status: "stale",
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      throw error;
+    } finally {
+      await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+    }
   });
 }
 
@@ -1420,6 +1788,377 @@ async function ensureGitSource(context: ProjectContext, id: string, source: GitS
   } finally {
     await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
     await rm(previous, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+function installerDataRoot(options: ManagerOptions): string {
+  const dataHome = process.env.XDG_DATA_HOME?.trim() || join(homedir(), ".local", "share");
+  return resolve(options.installerDataRoot ?? join(dataHome, "opencode-manager"));
+}
+
+function installerHome(options: ManagerOptions): string {
+  return resolve(options.installerHome ?? homedir());
+}
+
+async function ensureInstallerDataRoot(options: ManagerOptions): Promise<string> {
+  const root = installerDataRoot(options);
+  await mkdir(root, { recursive: true });
+  const info = await lstat(root);
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error("[opencode-manager] Installer data root must be a regular directory");
+  }
+  return realpath(root);
+}
+
+async function readInstallerState(options: ManagerOptions): Promise<InstallerState> {
+  const root = installerDataRoot(options);
+  let canonicalRoot: string;
+  try {
+    const info = await lstat(root);
+    if (info.isSymbolicLink() || !info.isDirectory()) {
+      throw new Error("[opencode-manager] Installer data root must be a regular directory");
+    }
+    canonicalRoot = await realpath(root);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, installers: {} };
+    throw error;
+  }
+  const file = join(canonicalRoot, "installers-state.json");
+  try {
+    const value = JSON.parse(await readFile(file, "utf8")) as unknown;
+    if (!isObject(value) || value.version !== 1) throw new Error("invalid version");
+    if (!isObject(value.installers ?? {})) throw new Error("invalid installers");
+    const installers: Record<string, ManagedInstallerState> = {};
+    for (const [id, raw] of Object.entries(value.installers as JsonObject)) {
+      if (!ID_PATTERN.test(id) || !isObject(raw)) throw new Error("invalid installer entry");
+      const entry = validateInstallerRegistry({ [id]: raw.entry })[id]!;
+      const home = text(raw.home, `managed installer "${id}" home`);
+      if (!isAbsolute(home)) throw new Error(`managed installer "${id}" home must be absolute`);
+      if (typeof raw.pending !== "boolean") throw new Error(`managed installer "${id}" pending must be boolean`);
+      if (!Array.isArray(raw.baseline)) throw new Error(`managed installer "${id}" baseline must be an array`);
+      const baseline = raw.baseline.map((item, index): InstallerBaseline => {
+        if (!isObject(item)) throw new Error(`managed installer "${id}" baseline ${index} must be an object`);
+        const [rule] = validateInstallerCleanup([item], id);
+        if (
+          !Array.isArray(item.names) ||
+          item.names.some(
+            (name) =>
+              typeof name !== "string" ||
+              name === "" ||
+              name === "." ||
+              name === ".." ||
+              name.includes("/") ||
+              name.includes("\\"),
+          )
+        ) {
+          throw new Error(`managed installer "${id}" baseline ${index} names are invalid`);
+        }
+        return { ...rule, names: [...item.names] };
+      });
+      let marker: InstallerMarkerState | undefined;
+      if (raw.marker !== undefined) {
+        if (
+          !isObject(raw.marker) ||
+          (raw.marker.kind !== "file" && raw.marker.kind !== "symlink") ||
+          typeof raw.marker.digest !== "string" ||
+          !/^[a-f0-9]{64}$/.test(raw.marker.digest) ||
+          (raw.marker.target !== undefined && typeof raw.marker.target !== "string")
+        ) {
+          throw new Error(`managed installer "${id}" marker is invalid`);
+        }
+        marker = {
+          kind: raw.marker.kind,
+          digest: raw.marker.digest,
+          ...(raw.marker.target === undefined ? {} : { target: raw.marker.target }),
+        };
+      }
+      installers[id] = { entry, home, baseline, pending: raw.pending, ...(marker ? { marker } : {}) };
+    }
+    return { version: 1, installers };
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, installers: {} };
+    if (error instanceof SyntaxError || error instanceof Error) {
+      throw new Error(`[opencode-manager] Invalid installer state in ${file}`);
+    }
+    throw error;
+  }
+}
+
+async function writeInstallerState(options: ManagerOptions, state: InstallerState): Promise<void> {
+  const root = await ensureInstallerDataRoot(options);
+  await writeAtomic(join(root, "installers-state.json"), `${JSON.stringify(state, null, 2)}\n`, 0o600);
+}
+
+function installerMarker(home: string, entry: InstallerRegistryEntry): string {
+  const marker = resolve(home, entry.marker);
+  if (!isWithin(marker, home)) throw new Error(`[opencode-manager] Installer marker escapes HOME`);
+  return marker;
+}
+
+async function installerSourceRoot(options: ManagerOptions): Promise<string> {
+  const root = await ensureInstallerDataRoot(options);
+  return ensureContainedDirectory(join(root, "installers"), root, "installer source cache");
+}
+
+async function ensureInstallerSource(
+  options: ManagerOptions,
+  id: string,
+  entry: InstallerRegistryEntry,
+): Promise<string> {
+  const root = await installerSourceRoot(options);
+  const installerRoot = await ensureContainedDirectory(join(root, id), root, `installer "${id}" cache`);
+  const target = join(installerRoot, entry.revision);
+  const valid = async (): Promise<boolean> => {
+    try {
+      const info = await lstat(target);
+      if (info.isSymbolicLink() || !info.isDirectory() || !isWithin(await realpath(target), root)) return false;
+      const [head, origin, status] = await Promise.all([
+        runGit(["-C", target, "rev-parse", "HEAD"]),
+        runGit(["-C", target, "remote", "get-url", "origin"]),
+        runGit(["-C", target, "status", "--porcelain", "--untracked-files=no"]),
+      ]);
+      return head === entry.revision && origin === entry.repository && status === "";
+    } catch {
+      return false;
+    }
+  };
+  if (await valid()) return target;
+
+  const temporary = `${target}.${process.pid}.${randomUUID()}.tmp`;
+  const previous = `${target}.${process.pid}.${randomUUID()}.old`;
+  try {
+    await runGit([
+      "clone",
+      "--filter=blob:none",
+      "--no-checkout",
+      "--no-recurse-submodules",
+      entry.repository,
+      temporary,
+    ]);
+    await runGit(["-C", temporary, "fetch", "--depth", "1", "origin", entry.revision]);
+    await runGit(["-C", temporary, "checkout", "--detach", "FETCH_HEAD"]);
+    const head = await runGit(["-C", temporary, "rev-parse", "HEAD"]);
+    if (head !== entry.revision) {
+      throw new Error(`[opencode-manager] Installer "${id}" resolved to unexpected commit ${head}`);
+    }
+    try {
+      await lstat(join(temporary, ".gitmodules"));
+      throw new Error(`[opencode-manager] Installer "${id}" contains unsupported submodules`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+
+    let movedPrevious = false;
+    try {
+      await rename(target, previous);
+      movedPrevious = true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    try {
+      await rename(temporary, target);
+    } catch (error) {
+      if (movedPrevious) await rename(previous, target).catch(() => undefined);
+      throw error;
+    }
+    if (movedPrevious) await rm(previous, { recursive: true, force: true });
+    return target;
+  } finally {
+    await rm(temporary, { recursive: true, force: true }).catch(() => undefined);
+    await rm(previous, { recursive: true, force: true }).catch(() => undefined);
+  }
+}
+
+async function runInstallerCommand(
+  command: string[],
+  source: string,
+  home: string,
+  timeoutMs = INSTALLER_COMMAND_TIMEOUT_MS,
+): Promise<string> {
+  const executable = resolve(source, command[0]!);
+  if (!isWithin(executable, source)) throw new Error("[opencode-manager] Installer command escapes its source");
+  const [info, canonicalSource, canonicalExecutable] = await Promise.all([
+    lstat(executable),
+    realpath(source),
+    realpath(executable),
+  ]);
+  if (info.isSymbolicLink() || !info.isFile() || !isWithin(canonicalExecutable, canonicalSource)) {
+    throw new Error("[opencode-manager] Installer executable must be a regular file inside its source");
+  }
+  return new Promise((resolvePromise, rejectPromise) => {
+    const detached = process.platform !== "win32";
+    const child = spawn(canonicalExecutable, command.slice(1), {
+      cwd: canonicalSource,
+      detached,
+      env: { ...process.env, HOME: home, GSTACK_SETUP_RUNNING: "1" },
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let killTimer: ReturnType<typeof setTimeout> | undefined;
+    const append = (current: string, chunk: Buffer): string =>
+      `${current}${chunk.toString("utf8")}`.slice(-MAX_COMMAND_OUTPUT_CHARS);
+    child.stdout.on("data", (chunk: Buffer) => {
+      stdout = append(stdout, chunk);
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr = append(stderr, chunk);
+    });
+    const kill = (signal: NodeJS.Signals): void => {
+      if (detached && child.pid) {
+        try {
+          process.kill(-child.pid, signal);
+          return;
+        } catch {
+          // Fall back to the direct child below.
+        }
+      }
+      child.kill(signal);
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      kill("SIGTERM");
+      killTimer = setTimeout(() => kill("SIGKILL"), 5_000);
+    }, timeoutMs);
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      rejectPromise(error);
+    });
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (killTimer) clearTimeout(killTimer);
+      const output = stdout.trim();
+      const detail = stderr.trim();
+      if (timedOut) {
+        rejectPromise(new Error(`[opencode-manager] Installer command ${command[0]} timed out`));
+        return;
+      }
+      if (code === 0) {
+        resolvePromise(output);
+        return;
+      }
+      rejectPromise(
+        new Error(
+          `[opencode-manager] Installer command ${command[0]} failed${detail ? `: ${detail}` : output ? `: ${output}` : ""}`,
+        ),
+      );
+    });
+  });
+}
+
+async function installerSourceMatches(
+  options: ManagerOptions,
+  id: string,
+  entry: InstallerRegistryEntry,
+): Promise<boolean> {
+  const root = await realpath(installerDataRoot(options));
+  const source = join(root, "installers", id, entry.revision);
+  try {
+    const info = await lstat(source);
+    if (info.isSymbolicLink() || !info.isDirectory()) return false;
+    const [head, origin, status] = await Promise.all([
+      runGit(["-C", source, "rev-parse", "HEAD"]),
+      runGit(["-C", source, "remote", "get-url", "origin"]),
+      runGit(["-C", source, "status", "--porcelain", "--untracked-files=no"]),
+    ]);
+    return head === entry.revision && origin === entry.repository && status === "";
+  } catch {
+    return false;
+  }
+}
+
+async function pathExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+async function installerMarkerState(path: string): Promise<InstallerMarkerState> {
+  const [info, targetInfo] = await Promise.all([lstat(path), stat(path)]);
+  if ((!info.isFile() && !info.isSymbolicLink()) || !targetInfo.isFile()) {
+    throw new Error(`[opencode-manager] Installer marker must resolve to a regular file: ${path}`);
+  }
+  const digest = hash(await readFile(path));
+  return info.isSymbolicLink() ? { kind: "symlink", digest, target: await realpath(path) } : { kind: "file", digest };
+}
+
+async function installerMarkerMatches(path: string, expected: InstallerMarkerState): Promise<boolean> {
+  try {
+    const current = await installerMarkerState(path);
+    return current.kind === expected.kind && current.digest === expected.digest && current.target === expected.target;
+  } catch {
+    return false;
+  }
+}
+
+async function canonicalInstallerHome(options: ManagerOptions): Promise<string> {
+  const home = installerHome(options);
+  await mkdir(home, { recursive: true });
+  const info = await lstat(home);
+  if (info.isSymbolicLink() || !info.isDirectory())
+    throw new Error("[opencode-manager] Installer HOME must be a directory");
+  return realpath(home);
+}
+
+async function installerCleanupDirectory(home: string, rule: InstallerCleanupRule): Promise<string | undefined> {
+  const canonicalHome = await realpath(home);
+  const directory = resolve(home, rule.directory);
+  if (!isWithin(directory, home)) throw new Error("[opencode-manager] Installer cleanup escapes HOME");
+  let info;
+  try {
+    info = await lstat(directory);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+  if (info.isSymbolicLink() || !info.isDirectory()) {
+    throw new Error(`[opencode-manager] Installer cleanup directory is not a regular directory: ${directory}`);
+  }
+  const canonicalDirectory = await realpath(directory);
+  if (!isWithin(canonicalDirectory, canonicalHome)) {
+    throw new Error("[opencode-manager] Installer cleanup directory escapes HOME");
+  }
+  return canonicalDirectory;
+}
+
+async function captureInstallerBaseline(
+  home: string,
+  rules: readonly InstallerCleanupRule[],
+): Promise<InstallerBaseline[]> {
+  return Promise.all(
+    rules.map(async (rule) => {
+      const directory = await installerCleanupDirectory(home, rule);
+      const names = directory
+        ? (await readdir(directory)).filter((name) => name === rule.prefix || name.startsWith(`${rule.prefix}-`))
+        : [];
+      return { ...rule, names };
+    }),
+  );
+}
+
+async function cleanupInstallerPaths(
+  home: string,
+  rules: readonly InstallerCleanupRule[],
+  baseline: readonly InstallerBaseline[],
+): Promise<void> {
+  for (const rule of rules) {
+    const canonicalDirectory = await installerCleanupDirectory(home, rule);
+    if (!canonicalDirectory) continue;
+    const previous = baseline.find((item) => item.directory === rule.directory && item.prefix === rule.prefix);
+    for (const name of await readdir(canonicalDirectory)) {
+      if (name !== rule.prefix && !name.startsWith(`${rule.prefix}-`)) continue;
+      if (previous?.names.includes(name)) continue;
+      const target = join(canonicalDirectory, name);
+      if (!isWithin(target, canonicalDirectory))
+        throw new Error("[opencode-manager] Installer cleanup path escapes its directory");
+      await rm(target, { recursive: true, force: true });
+    }
   }
 }
 
@@ -1707,6 +2446,133 @@ async function discoverSkillDirectories(root: string, ignoreSymlinks = false): P
   }
   await visit(root);
   return found;
+}
+
+export async function listInstallers(options: ManagerOptions): Promise<InstallerStatus[]> {
+  const [catalog, state] = await Promise.all([loadCatalogInternal(options), readInstallerState(options)]);
+  const home = await canonicalInstallerHome(options);
+  const ids = [...new Set([...Object.keys(catalog.installers), ...Object.keys(state.installers)])];
+  return Promise.all(
+    ids.map(async (id) => {
+      const registryEntry = catalog.installers[id];
+      const managed = state.installers[id];
+      if (managed && managed.home !== home) {
+        throw new Error(`[opencode-manager] Installer "${id}" state belongs to a different HOME`);
+      }
+      const entry = registryEntry ?? managed?.entry;
+      if (!entry) throw new Error(`[opencode-manager] Installer "${id}" has no registry or state metadata`);
+      const markerPath = installerMarker(home, managed?.entry ?? entry);
+      const installed = await pathExists(markerPath);
+      const sourceCurrent = managed ? await installerSourceMatches(options, id, managed.entry) : false;
+      const registryCurrent =
+        registryEntry !== undefined &&
+        managed !== undefined &&
+        registryEntry.repository === managed.entry.repository &&
+        registryEntry.revision === managed.entry.revision;
+      const markerOwned =
+        managed?.marker === undefined || !installed ? true : await installerMarkerMatches(markerPath, managed.marker);
+      const external = installed && (!managed || (!managed.pending && !markerOwned));
+      const ownership: InstallerStatus["ownership"] = external ? "external" : managed ? "manager" : "absent";
+      let status: ResourceStatus = "absent";
+      if (external) status = "conflict";
+      if (!external && managed && (managed.pending || !installed || !sourceCurrent || !registryCurrent)) {
+        status = "modified";
+      }
+      if (!external && installed && managed && !managed.pending && sourceCurrent && registryCurrent) status = "managed";
+      return {
+        id,
+        ...entry,
+        installed,
+        status,
+        ownership,
+      };
+    }),
+  );
+}
+
+export async function setInstallerEnabled(
+  options: ManagerOptions,
+  id: string,
+  enabled: boolean,
+): Promise<InstallerStatus> {
+  const catalog = await loadCatalogInternal(options);
+  const registryEntry = catalog.installers[id];
+  const dataRoot = await ensureInstallerDataRoot(options);
+  const home = await canonicalInstallerHome(options);
+  let removedEntry: InstallerRegistryEntry | undefined;
+  await withLockFile(join(dataRoot, "installers.lock"), async () => {
+    const state = await readInstallerState(options);
+    const managed = state.installers[id];
+    if (managed && managed.home !== home) {
+      throw new Error(`[opencode-manager] Installer "${id}" state belongs to a different HOME`);
+    }
+    if (enabled) {
+      if (!registryEntry) throw new Error(`[opencode-manager] Unknown installer "${id}"`);
+      const markerPath = installerMarker(home, managed?.entry ?? registryEntry);
+      const markerPresent = await pathExists(markerPath);
+      if (markerPresent && !managed) {
+        throw new Error(`[opencode-manager] Installer "${id}" conflicts with an external installation`);
+      }
+      if (
+        markerPresent &&
+        managed &&
+        !managed.pending &&
+        (!managed.marker || !(await installerMarkerMatches(markerPath, managed.marker)))
+      ) {
+        throw new Error(`[opencode-manager] Installer "${id}" marker was replaced externally`);
+      }
+      const captured = await captureInstallerBaseline(home, registryEntry.cleanup);
+      const baseline = managed
+        ? captured.map(
+            (item) =>
+              managed.baseline.find(
+                (previous) => previous.directory === item.directory && previous.prefix === item.prefix,
+              ) ?? item,
+          )
+        : captured;
+      if (!managed) {
+        state.installers[id] = { entry: registryEntry, home, baseline, pending: true };
+        await writeInstallerState(options, state);
+      }
+      const source = await ensureInstallerSource(options, id, registryEntry);
+      await runInstallerCommand(registryEntry.install, source, home);
+      if (!(await pathExists(installerMarker(home, registryEntry)))) {
+        throw new Error(`[opencode-manager] Installer "${id}" completed without creating its marker`);
+      }
+      const marker = await installerMarkerState(installerMarker(home, registryEntry));
+      state.installers[id] = { entry: registryEntry, home, baseline, pending: false, marker };
+      await writeInstallerState(options, state);
+      return;
+    }
+
+    if (!managed) throw new Error(`[opencode-manager] Installer "${id}" is not managed and cannot be removed`);
+    const markerPath = installerMarker(home, managed.entry);
+    if (
+      !managed.pending &&
+      (await pathExists(markerPath)) &&
+      (!managed.marker || !(await installerMarkerMatches(markerPath, managed.marker)))
+    ) {
+      throw new Error(`[opencode-manager] Installer "${id}" marker was replaced externally`);
+    }
+    removedEntry = managed.entry;
+    if (managed.entry.uninstall) {
+      const source = await ensureInstallerSource(options, id, managed.entry);
+      await runInstallerCommand(managed.entry.uninstall, source, home);
+    }
+    await cleanupInstallerPaths(home, managed.entry.cleanup, managed.baseline);
+    if (await pathExists(installerMarker(home, managed.entry))) {
+      throw new Error(`[opencode-manager] Installer "${id}" did not remove its marker`);
+    }
+    delete state.installers[id];
+    await writeInstallerState(options, state);
+  });
+
+  const updated = (await listInstallers(options)).find((installer) => installer.id === id);
+  if (!updated && removedEntry) {
+    return { id, ...removedEntry, installed: false, status: "absent", ownership: "absent" };
+  }
+  if (!updated) throw new Error(`[opencode-manager] Installer "${id}" disappeared from the registry`);
+  return updated;
 }
 
 export async function listSkillSources(options: ManagerOptions): Promise<SkillSourceStatus[]> {

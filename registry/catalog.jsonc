@@ -371,6 +371,22 @@
     },
   },
 
+  // Installers run pinned upstream setup workflows outside the project after explicit confirmation.
+  "installers": {
+    "gstack": {
+      "type": "git",
+      "title": "gstack",
+      "description": "Garry Tan's OpenCode software factory, workflow skills, browser tooling, and release automation.",
+      "tags": ["agents", "workflow"],
+      "repository": "https://github.com/garrytan/gstack.git",
+      "revision": "a3259400a366593e0c909dd9ac3e59752efd2488",
+      "install": ["setup", "--host", "opencode", "--no-prefix", "--quiet"],
+      "cleanup": [{ "directory": ".config/opencode/skills", "prefix": "gstack" }],
+      "marker": ".config/opencode/skills/gstack/SKILL.md",
+      "license": "MIT",
+    },
+  },
+
   // Git sources are pinned so selecting a skill is reproducible and reviewable.
   "skillSources": {
     "custom": {

@@ -11,6 +11,23 @@ export interface PluginRegistryEntry {
     tags: string[];
     package: string;
 }
+export interface InstallerRegistryEntry {
+    type: "git";
+    title: string;
+    description: string;
+    tags: string[];
+    repository: string;
+    revision: string;
+    install: string[];
+    uninstall?: string[];
+    cleanup: InstallerCleanupRule[];
+    marker: string;
+    license?: string;
+}
+export interface InstallerCleanupRule {
+    directory: string;
+    prefix: string;
+}
 export interface FileRegistryEntry {
     title: string;
     description: string;
@@ -56,6 +73,7 @@ export interface RegistryCatalog {
     version: 1;
     mcps: Record<string, McpRegistryEntry>;
     plugins: Record<string, PluginRegistryEntry>;
+    installers?: Record<string, InstallerRegistryEntry>;
     skillSources: Record<string, SkillSource>;
     rules: Record<string, FileRegistryEntry>;
     agents: Record<string, AgentRegistryEntry>;
@@ -64,6 +82,8 @@ export interface RegistryCatalog {
 export interface ManagerOptions {
     projectRoot: string;
     catalogPath?: string;
+    installerDataRoot?: string;
+    installerHome?: string;
     effectiveMcp?: Record<string, unknown>;
     effectiveAgent?: Record<string, unknown>;
     effectivePlugin?: readonly unknown[];
@@ -87,6 +107,25 @@ export interface PluginStatus extends PluginRegistryEntry {
     enabled: boolean;
     status: ResourceStatus;
     ownership: "manager" | "project" | "inherited" | "absent";
+}
+export interface InstallerStatus extends InstallerRegistryEntry {
+    id: string;
+    installed: boolean;
+    status: ResourceStatus;
+    ownership: "manager" | "external" | "absent";
+}
+export interface RegistrySyncResult {
+    catalogPath: string;
+    revision?: string;
+    status: "updated" | "current" | "stale";
+    error?: string;
+}
+export interface RegistrySyncSettings {
+    repository?: string;
+    ref?: string;
+    force?: boolean;
+    maxAgeMs?: number;
+    cacheRoot?: string;
 }
 export interface SkillStatus {
     id: string;
@@ -136,6 +175,9 @@ export declare function listMcps(options: ManagerOptions): Promise<McpStatus[]>;
 export declare function setMcpEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<McpStatus>;
 export declare function listPlugins(options: ManagerOptions): Promise<PluginStatus[]>;
 export declare function setPluginEnabled(options: ManagerOptions, id: string, enabled: boolean, mutation?: MutationOptions): Promise<PluginStatus>;
+export declare function syncRegistry(options: Pick<ManagerOptions, "projectRoot">, settings?: RegistrySyncSettings): Promise<RegistrySyncResult>;
+export declare function listInstallers(options: ManagerOptions): Promise<InstallerStatus[]>;
+export declare function setInstallerEnabled(options: ManagerOptions, id: string, enabled: boolean): Promise<InstallerStatus>;
 export declare function listSkillSources(options: ManagerOptions): Promise<SkillSourceStatus[]>;
 export declare function listSkills(options: ManagerOptions, sourceID: string): Promise<SkillStatus[]>;
 export declare function setSkillEnabled(options: ManagerOptions, sourceID: string, skillPath: string, enabled: boolean, mutation?: MutationOptions): Promise<SkillStatus>;

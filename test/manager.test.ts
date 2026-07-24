@@ -1,6 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { lstat, mkdtemp, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse } from "jsonc-parser";
@@ -8,6 +21,7 @@ import { updateSkillSourceRevisions } from "../scripts/update-skill-source-revis
 import plugin, { resolveProjectRoot } from "../src/tui.ts";
 import {
   getProfile,
+  listInstallers,
   listAgents,
   listMcps,
   listPlugins,
@@ -16,12 +30,14 @@ import {
   listSkills,
   loadCatalog,
   setAgentEnabled,
+  setInstallerEnabled,
   setMcpEnabled,
   setPluginEnabled,
   setProfileEnabled,
   setRuleEnabled,
   setSkillEnabled,
   setSkillSourceEnabled,
+  syncRegistry,
 } from "../src/manager.ts";
 
 const temporaryRoots: string[] = [];
@@ -38,6 +54,17 @@ async function exists(path: string): Promise<boolean> {
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function git(cwd: string, ...args: string[]): Promise<string> {
+  const child = Bun.spawn(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  const [exitCode, stdout, stderr] = await Promise.all([
+    child.exited,
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+  ]);
+  if (exitCode !== 0) throw new Error(`git ${args[0] ?? "command"} failed: ${stderr.trim()}`);
+  return stdout.trim();
 }
 
 afterEach(async () => {
@@ -209,6 +236,13 @@ describe("registry", () => {
     expect(catalog.skillSources["pm-skills"]?.type === "git" ? catalog.skillSources["pm-skills"].repository : "").toBe(
       "https://github.com/phuryn/pm-skills.git",
     );
+    expect(catalog.installers?.gstack).toMatchObject({
+      type: "git",
+      repository: "https://github.com/garrytan/gstack.git",
+      marker: ".config/opencode/skills/gstack/SKILL.md",
+      license: "MIT",
+    });
+    expect(catalog.installers?.gstack?.revision).toMatch(/^[a-f0-9]{40}$/);
     expect(catalog.profiles.some((profile) => profile.id === "qdrant")).toBe(true);
     expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
     expect(catalog.agents["review-team"]?.type).toBe("team");
@@ -219,6 +253,255 @@ describe("registry", () => {
     const value = await fixture();
     await writeFile(value.catalogPath, `{"version":1,"mcps":{},"mcps":{},"skillSources":{},"profiles":[]}`);
     await expect(loadCatalog({ catalogPath: value.catalogPath })).rejects.toThrow("Duplicate JSON property");
+  });
+
+  test("installs and removes a pinned external installer in an isolated HOME", async () => {
+    const value = await fixture();
+    const dataRoot = join(value.root, "installer-data");
+    const home = join(value.root, "installer-home");
+    const source = join(dataRoot, "installers", "fixture-installer-working");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(source, "setup-test"),
+      `#!/bin/sh
+set -eu
+mkdir -p "$HOME/.config/opencode/skills/fixture"
+printf '%s\n' '---' 'name: fixture' 'description: Fixture installer skill.' '---' > "$HOME/.config/opencode/skills/fixture/SKILL.md"
+`,
+    );
+    await chmod(join(source, "setup-test"), 0o755);
+    await git(source, "init");
+    await git(source, "config", "user.name", "OpenCode Manager Test");
+    await git(source, "config", "user.email", "test@example.com");
+    await git(source, "remote", "add", "origin", "https://github.com/example/fixture-installer.git");
+    await git(source, "add", "setup-test");
+    await git(source, "commit", "-m", "fixture installer");
+    const revision = await git(source, "rev-parse", "HEAD");
+    const revisionSource = join(dataRoot, "installers", "fixture-installer", revision);
+    await mkdir(join(dataRoot, "installers", "fixture-installer"), { recursive: true });
+    await rename(source, revisionSource);
+
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.installers = {
+      "fixture-installer": {
+        type: "git",
+        title: "Fixture Installer",
+        description: "Installs a fixture skill globally.",
+        tags: ["test"],
+        repository: "https://github.com/example/fixture-installer.git",
+        revision,
+        install: ["setup-test"],
+        cleanup: [{ directory: ".config/opencode/skills", prefix: "fixture" }],
+        marker: ".config/opencode/skills/fixture/SKILL.md",
+      },
+    };
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    const installerOptions = { ...value.options, installerDataRoot: dataRoot, installerHome: home };
+    const preexisting = join(home, ".config", "opencode", "skills", "fixture-personal");
+    await mkdir(preexisting, { recursive: true });
+    await writeFile(join(preexisting, "keep.txt"), "keep\n");
+
+    expect(await listInstallers(installerOptions)).toMatchObject([{ id: "fixture-installer", status: "absent" }]);
+    expect(await setInstallerEnabled(installerOptions, "fixture-installer", true)).toMatchObject({
+      installed: true,
+      status: "managed",
+    });
+    const managedMarker = join(home, ".config", "opencode", "skills", "fixture", "SKILL.md");
+    expect(await exists(managedMarker)).toBe(true);
+    const managedMarkerContent = await readFile(managedMarker, "utf8");
+    await writeFile(managedMarker, "replaced externally\n");
+    expect(await listInstallers(installerOptions)).toMatchObject([
+      { id: "fixture-installer", ownership: "external", status: "conflict" },
+    ]);
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", false)).rejects.toThrow(
+      "marker was replaced externally",
+    );
+    await writeFile(managedMarker, managedMarkerContent);
+    const config = join(home, ".config");
+    const outsideConfig = join(value.root, "outside-config");
+    await rename(config, outsideConfig);
+    await symlink(outsideConfig, config);
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", false)).rejects.toThrow(
+      "cleanup directory escapes HOME",
+    );
+    await rm(config, { force: true });
+    await rename(outsideConfig, config);
+
+    const failingSource = join(value.root, "fixture-installer-failing");
+    await git(value.root, "clone", revisionSource, failingSource);
+    await git(failingSource, "config", "user.name", "OpenCode Manager Test");
+    await git(failingSource, "config", "user.email", "test@example.com");
+    await git(failingSource, "remote", "set-url", "origin", "https://github.com/example/fixture-installer.git");
+    await writeFile(join(failingSource, "setup-test"), "#!/bin/sh\nexit 1\n");
+    await chmod(join(failingSource, "setup-test"), 0o755);
+    await git(failingSource, "add", "setup-test");
+    await git(failingSource, "commit", "-m", "failing update");
+    const failingRevision = await git(failingSource, "rev-parse", "HEAD");
+    await rename(failingSource, join(dataRoot, "installers", "fixture-installer", failingRevision));
+    catalog.installers["fixture-installer"].revision = failingRevision;
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", true)).rejects.toThrow(
+      "Installer command setup-test failed",
+    );
+    expect(
+      JSON.parse(await readFile(join(dataRoot, "installers-state.json"), "utf8")).installers["fixture-installer"].entry
+        .revision,
+    ).toBe(revision);
+    expect(await listInstallers(installerOptions)).toMatchObject([
+      { id: "fixture-installer", installed: true, ownership: "manager", status: "modified" },
+    ]);
+
+    const removedRegistryEntry = catalog.installers["fixture-installer"];
+    delete catalog.installers["fixture-installer"];
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    expect(await setInstallerEnabled(installerOptions, "fixture-installer", false)).toMatchObject({
+      installed: false,
+      ownership: "absent",
+      status: "absent",
+    });
+    expect(await exists(join(preexisting, "keep.txt"))).toBe(true);
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", false)).rejects.toThrow("is not managed");
+
+    catalog.installers["fixture-installer"] = removedRegistryEntry;
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    const marker = join(home, ".config", "opencode", "skills", "fixture", "SKILL.md");
+    await mkdir(join(home, ".config", "opencode", "skills", "fixture"), { recursive: true });
+    await writeFile(marker, "external fixture\n");
+    expect(await listInstallers(installerOptions)).toMatchObject([
+      { id: "fixture-installer", installed: true, ownership: "external", status: "conflict" },
+    ]);
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", true)).rejects.toThrow(
+      "conflicts with an external installation",
+    );
+    await expect(setInstallerEnabled(installerOptions, "fixture-installer", false)).rejects.toThrow("is not managed");
+  });
+
+  test("rejects installer cleanup paths that normalize to HOME", async () => {
+    const value = await fixture();
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    for (const directory of ["./", "child/.."] as const) {
+      catalog.installers = {
+        dangerous: {
+          type: "git",
+          title: "Dangerous",
+          description: "Invalid cleanup fixture.",
+          tags: [],
+          repository: "https://github.com/example/dangerous.git",
+          revision: "a".repeat(40),
+          install: ["setup"],
+          cleanup: [{ directory, prefix: "projects" }],
+          marker: ".config/opencode/skills/dangerous/SKILL.md",
+        },
+      };
+      await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+      await expect(loadCatalog({ catalogPath: value.catalogPath })).rejects.toThrow("cleanup 0 is invalid");
+    }
+  });
+
+  test("keeps a partial fresh installer manager-owned and removable", async () => {
+    const value = await fixture();
+    const dataRoot = join(value.root, "partial-data");
+    const home = join(value.root, "partial-home");
+    const source = join(value.root, "partial-source");
+    await mkdir(source, { recursive: true });
+    await writeFile(
+      join(source, "setup-test"),
+      `#!/bin/sh
+set -eu
+mkdir -p "$HOME/.config/opencode/skills/partial"
+printf 'partial\n' > "$HOME/.config/opencode/skills/partial/SKILL.md"
+exit 1
+`,
+    );
+    await chmod(join(source, "setup-test"), 0o755);
+    await git(source, "init");
+    await git(source, "config", "user.name", "OpenCode Manager Test");
+    await git(source, "config", "user.email", "test@example.com");
+    await git(source, "remote", "add", "origin", "https://github.com/example/partial.git");
+    await git(source, "add", "setup-test");
+    await git(source, "commit", "-m", "partial installer");
+    const revision = await git(source, "rev-parse", "HEAD");
+    const target = join(dataRoot, "installers", "partial", revision);
+    await mkdir(join(dataRoot, "installers", "partial"), { recursive: true });
+    await rename(source, target);
+
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.installers = {
+      partial: {
+        type: "git",
+        title: "Partial",
+        description: "Partial installer fixture.",
+        tags: ["test"],
+        repository: "https://github.com/example/partial.git",
+        revision,
+        install: ["setup-test"],
+        cleanup: [{ directory: ".config/opencode/skills", prefix: "partial" }],
+        marker: ".config/opencode/skills/partial/SKILL.md",
+      },
+    };
+    await writeFile(value.catalogPath, JSON.stringify(catalog, null, 2));
+    const options = { ...value.options, installerDataRoot: dataRoot, installerHome: home };
+
+    await expect(setInstallerEnabled(options, "partial", true)).rejects.toThrow("Installer command setup-test failed");
+    expect(await listInstallers(options)).toMatchObject([
+      { id: "partial", installed: true, ownership: "manager", status: "modified" },
+    ]);
+    expect(await setInstallerEnabled(options, "partial", false)).toMatchObject({
+      installed: false,
+      ownership: "absent",
+      status: "absent",
+    });
+  });
+
+  test("uses a fresh synced registry snapshot without network access", async () => {
+    const value = await fixture();
+    const cacheRoot = join(value.root, "registry-cache");
+    const sourceKey = sha256("https://github.com/nguyenthdat/opencode-manager.git\0main").slice(0, 24);
+    const syncDir = join(cacheRoot, sourceKey);
+    const working = join(syncDir, "working");
+    const registry = join(working, "registry");
+    const skill = join(registry, "skills", "fixture");
+    await mkdir(skill, { recursive: true });
+    await writeFile(join(skill, "SKILL.md"), "---\nname: fixture\ndescription: Synced fixture skill.\n---\n");
+    await writeFile(
+      join(registry, "catalog.jsonc"),
+      JSON.stringify({
+        version: 1,
+        mcps: {},
+        plugins: {},
+        installers: {},
+        skillSources: { custom: { type: "local", title: "Custom", path: "skills", skillsPath: "." } },
+        rules: {},
+        agents: {},
+        profiles: [],
+      }),
+    );
+    await git(working, "init");
+    await git(working, "config", "user.name", "OpenCode Manager Test");
+    await git(working, "config", "user.email", "test@example.com");
+    await git(working, "remote", "add", "origin", "https://github.com/nguyenthdat/opencode-manager.git");
+    await git(working, "add", "registry");
+    await git(working, "commit", "-m", "registry snapshot");
+    const revision = await git(working, "rev-parse", "HEAD");
+    const snapshot = join(syncDir, "snapshots", revision);
+    await mkdir(join(syncDir, "snapshots"), { recursive: true });
+    await rename(working, snapshot);
+    await writeFile(
+      join(syncDir, "current.json"),
+      JSON.stringify({
+        repository: "https://github.com/nguyenthdat/opencode-manager.git",
+        ref: "main",
+        revision,
+        checkedAt: Date.now(),
+      }),
+    );
+
+    const result = await syncRegistry({ projectRoot: value.projectRoot }, { cacheRoot });
+    expect(result).toEqual({
+      catalogPath: join(await realpath(snapshot), "registry", "catalog.jsonc"),
+      revision,
+      status: "current",
+    });
   });
 
   test("updates duplicate-repository revisions once while preserving JSONC comments", async () => {
@@ -297,8 +580,8 @@ describe("registry", () => {
     const projectRoot = await mkdtemp(join(tmpdir(), "opencode-manager-bundled-skills-"));
     temporaryRoots.push(projectRoot);
     const skills = await listSkills({ projectRoot }, "custom");
-    expect(skills).toHaveLength(27);
-    expect(new Set(skills.map((skill) => skill.name)).size).toBe(27);
+    expect(skills).toHaveLength(28);
+    expect(new Set(skills.map((skill) => skill.name)).size).toBe(28);
     expect(skills.every((skill) => skill.description.length > 0 && skill.description.length <= 1024)).toBe(true);
     expect(skills.every((skill) => skill.status === "absent")).toBe(true);
   });
@@ -469,6 +752,22 @@ describe("project MCP registry", () => {
     await mkdir(managerDir, { recursive: true });
     await writeFile(join(managerDir, "manager.lock"), "999999999\n0\n");
     expect((await setMcpEnabled(value.options, "docs", true)).enabled).toBe(true);
+  });
+
+  test("does not steal an old lock from a live process", async () => {
+    const value = await fixture();
+    const managerDir = join(value.projectRoot, ".opencode", ".opencode-manager");
+    const lock = join(managerDir, "manager.lock");
+    await mkdir(managerDir, { recursive: true });
+    await writeFile(lock, `${process.pid}\n0\n`);
+    const started = Date.now();
+    const release = setTimeout(() => void unlink(lock).catch(() => undefined), 100);
+    try {
+      expect((await setMcpEnabled(value.options, "docs", true)).enabled).toBe(true);
+    } finally {
+      clearTimeout(release);
+    }
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
   });
 
   test("rejects a backup directory symlink before overriding an MCP", async () => {
