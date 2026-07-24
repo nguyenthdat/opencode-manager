@@ -1,0 +1,56 @@
+{
+  "skill_name": "defender-xdr-hunting-analyst",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Investigate Defender XDR incident 12345. The alert mentions powershell.exe on FINANCE-PC-07 and an outbound connection to cdn-example.net. Use the Defender MCP to determine whether this is malicious, trace the process/file/network chain, check for other affected devices, and give me a reproducible report. Do not isolate or run Live Response.",
+      "expected_output": "A bounded endpoint investigation starting from the incident, using process lineage plus file and network pivots, a disconfirmation query, rate-limit ledger, exact KQL, confidence, blast radius, and explicit telemetry gaps without invoking response tools.",
+      "expectations": [
+        "The investigation starts with the incident or alert evidence before broad hunting.",
+        "Endpoint process lineage uses ProcessUniqueId and InitiatingProcessUniqueId or explains why those fields were unavailable.",
+        "The report includes DeviceFileEvents and DeviceNetworkEvents pivots with explicit time bounds.",
+        "The report distinguishes observed evidence from inferred malicious behavior and includes a benign alternative.",
+        "The executed KQL uses schema-valid endpoint account fields and records any semantic query error instead of claiming results.",
+        "No Live Response or containment tool is invoked."
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "A user reported a QR-code phishing email. Analyze the message, find recipients and Safe Links clicks, determine whether the user later signed in to a suspicious resource, and check for cloud-app or endpoint follow-on activity. We have the NetworkMessageId NMI-abc and user alice@example.com. Keep the investigation within seven days and be careful with Defender query limits.",
+      "expected_output": "A staged Office 365 to identity to cloud/endpoint analysis using EmailEvents, EmailUrlInfo, UrlClickEvents, optional attachment/post-delivery tables, current Entra sign-in tables, and explicit rate-limit handling.",
+      "expectations": [
+        "The email chain pivots on NetworkMessageId and includes URL-click timing and click-through state.",
+        "QR-code URL handling and missing-message-ID limitations are stated when relevant.",
+        "Identity follow-up uses EntraIdSignInEvents or clearly records a fallback and coverage gap.",
+        "The result distinguishes a click from successful credential use or endpoint execution.",
+        "The Safe Links query uses Url rather than assuming a UrlDomain column in UrlClickEvents.",
+        "The report records query cost, result bounds, and throttling outcomes."
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Review a suspicious service-principal sign-in for app 8f1... from an unfamiliar IP. Determine whether it accessed cloud resources or made unusual Graph API operations during the last 24 hours. If the tenant cannot expose one of the required tables, say exactly what cannot be concluded instead of guessing.",
+      "expected_output": "An identity and cloud-app investigation using EntraIdSpnSignInEvents, CloudAppEvents, GraphApiAuditEvents where available, a baseline or disconfirmation check, and an explicit availability/permission gap.",
+      "expectations": [
+        "The analysis distinguishes ApplicationId, ServicePrincipalId, and managed identity semantics.",
+        "The sign-in is correlated to cloud activity with a narrow UTC window and defensible identifiers.",
+        "The analysis uses OAuthAppId for an Entra OAuth application ID and does not treat CloudAppEvents.ApplicationId as the same identifier.",
+        "GraphApiAuditEvents is checked or explicitly marked unavailable rather than assumed.",
+        "The conclusion does not treat an unfamiliar IP alone as proof of compromise.",
+        "Missing telemetry is reported as an uncertainty with a precise impact on the verdict."
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "During an incident review, the first Advanced Hunting request returns HTTP 429 and the XDR incident response is partial. Continue only if it is safe, preserve the evidence already obtained, and explain exactly how you would handle Retry-After, Warning metadata, one-page pagination, and the local Defender MCP's hidden response headers. Do not spam retries.",
+      "expected_output": "A safe failure-path response that stops query fan-out, honors visible Retry-After, treats partial content as incomplete, records pagination and adapter limitations, and states which hypotheses remain unverified.",
+      "expectations": [
+        "The workflow stops immediate retries and does not invent a universal quota reset duration.",
+        "A visible Retry-After is honored and a hidden Retry-After is reported as an MCP limitation.",
+        "Partial provider content and Warning metadata are treated as incomplete evidence.",
+        "OData pagination is tracked explicitly because the local MCP fetches one page.",
+        "The final result identifies unverified hypotheses rather than presenting incomplete data as a clean negative."
+      ]
+    }
+  ]
+}
