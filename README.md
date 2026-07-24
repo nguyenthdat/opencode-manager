@@ -462,12 +462,12 @@ bun run typecheck
 bun test
 ```
 
-`bun install` runs the `prepare` script and installs the repository's
-`pre-commit` hook through `simple-git-hooks`. Before every commit,
-`lint-staged` formats only staged TypeScript, JavaScript, project JSON/JSONC,
-workflow YAML, and maintained documentation, then re-stages the formatted
-content while preserving unrelated unstaged hunks. Generated `dist/` files and
-vendored `registry/skills/` content are intentionally excluded. CI and release
+`bun install` runs the `prepare` script and installs the tracked
+`.husky/pre-commit` hook through Husky. Before every commit, `lint-staged`
+formats only staged TypeScript, JavaScript, project JSON/JSONC, workflow YAML,
+and maintained documentation, then re-stages the formatted content while
+preserving unrelated unstaged hunks. Generated `dist/` files and vendored
+`registry/skills/` content are intentionally excluded. CI and release
 workflows run `format:check` as the non-bypassable enforcement layer.
 
 Release and npm Trusted Publishing instructions are in
