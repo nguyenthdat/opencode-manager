@@ -11,6 +11,18 @@ interface CliOptions {
   sourceIDs: string[];
 }
 
+interface ValidatedSource {
+  id: string;
+  count: number;
+  paths: string[];
+  revision: string;
+}
+
+interface FailedSource {
+  id: string;
+  error: string;
+}
+
 function parseCli(args: string[]): CliOptions {
   let catalogPath = DEFAULT_CATALOG;
   let concurrency = 3;
@@ -53,7 +65,7 @@ async function main(): Promise<void> {
   }
   const sources = requested ? available.filter(([id]) => requested.has(id)) : available;
   const projectRoot = await mkdtemp(join(tmpdir(), "opencode-manager-source-validation-"));
-  const results: ({ id: string; count: number; revision: string } | { id: string; error: string })[] = [];
+  const results: (ValidatedSource | FailedSource)[] = [];
   let cursor = 0;
 
   try {
@@ -65,7 +77,12 @@ async function main(): Promise<void> {
         try {
           const skills = await listSkills({ projectRoot, catalogPath: options.catalogPath }, id);
           if (skills.length === 0) throw new Error("source contains no selectable skills");
-          results[current] = { id, count: skills.length, revision: source.revision };
+          results[current] = {
+            id,
+            count: skills.length,
+            paths: skills.map((skill) => skill.path),
+            revision: source.revision,
+          };
         } catch (error) {
           results[current] = { id, error: error instanceof Error ? error.message : String(error) };
         }
@@ -76,12 +93,39 @@ async function main(): Promise<void> {
     await rm(projectRoot, { recursive: true, force: true });
   }
 
+  const validated = results.filter((result): result is ValidatedSource => !("error" in result));
+  const pathsBySource = new Map(validated.map((result) => [result.id, new Set(result.paths)]));
+  const profileErrors: string[] = [];
+  for (const profile of catalog.profiles) {
+    for (const skill of profile.skills) {
+      const sourcePaths = pathsBySource.get(skill.source);
+      if (sourcePaths && !sourcePaths.has(skill.path)) {
+        profileErrors.push(`${profile.id}: missing upstream skill ${skill.source}:${skill.path}`);
+      }
+    }
+
+    const sourcePaths = pathsBySource.get(profile.id);
+    if (!sourcePaths) continue;
+    const profilePaths = new Set(
+      profile.skills.filter((skill) => skill.source === profile.id).map((skill) => skill.path),
+    );
+    const omitted = [...sourcePaths].filter((path) => !profilePaths.has(path));
+    if (omitted.length > 0) {
+      profileErrors.push(`${profile.id}: profile omits ${omitted.join(", ")}`);
+    }
+  }
+
   for (const result of results) {
     if ("error" in result) console.error(`${result.id}: ${result.error}`);
     else console.log(`${result.id}: ${result.count} skills @ ${result.revision.slice(0, 12)}`);
   }
+  for (const error of profileErrors) console.error(error);
   const failures = results.filter((result) => "error" in result);
-  if (failures.length > 0) throw new Error(`${failures.length} git skill source(s) failed validation`);
+  if (failures.length > 0 || profileErrors.length > 0) {
+    throw new Error(
+      `${failures.length} git skill source(s) and ${profileErrors.length} profile issue(s) failed validation`,
+    );
+  }
   console.log(`Validated ${results.length} git skill sources.`);
 }
 

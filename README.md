@@ -477,6 +477,11 @@ agent or team IDs:
 Profile actions manage only resources declared by the registry. They never
 disable or remove unrelated MCPs, rules, agents, or project skills.
 
+A profile whose ID matches a Git skill source ID represents that complete
+source. `registry:validate` verifies that it references every current upstream
+skill path and no removed path, so revision updates cannot silently leave these
+vendor profiles incomplete.
+
 ## Safety model
 
 - Project config is edited with targeted JSONC changes, preserving comments and

@@ -244,6 +244,20 @@ describe("registry", () => {
     });
     expect(catalog.installers?.gstack?.revision).toMatch(/^[a-f0-9]{40}$/);
     expect(catalog.profiles.some((profile) => profile.id === "qdrant")).toBe(true);
+    const completeSkillProfiles = {
+      cloudflare: 11,
+      clickhouse: 11,
+      redpanda: 32,
+      qdrant: 10,
+      windmill: 28,
+      hallmark: 1,
+    } as const;
+    for (const [id, skillCount] of Object.entries(completeSkillProfiles)) {
+      const profile = catalog.profiles.find((item) => item.id === id);
+      expect(profile?.skills).toHaveLength(skillCount);
+      expect(profile?.skills.every((skill) => skill.source === id)).toBe(true);
+      expect(new Set(profile?.skills.map((skill) => skill.path)).size).toBe(skillCount);
+    }
     expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
     expect(catalog.agents["review-team"]?.type).toBe("team");
     expect(catalog.profiles.some((profile) => profile.id === "architecture")).toBe(true);
