@@ -3,6 +3,16 @@
 
   // MCP definitions in this registry are copied only to the active project's config.
   "mcps": {
+    "bitwarden": {
+      "title": "Bitwarden",
+      "description": "Access Bitwarden vault and manage passwords through MCP.",
+      "config": {
+        "type": "local",
+        "command": ["bunx", "-y", "@bitwarden/mcp-server"],
+        "enabled": false,
+        "environment": { "BW_SESSION": "{env:BW_SESSION}" },
+      },
+    },
     "codebase-memory": {
       "title": "Codebase Memory",
       "description": "Code graph, architecture, symbol search, and change impact analysis.",
