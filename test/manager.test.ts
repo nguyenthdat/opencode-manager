@@ -227,6 +227,7 @@ describe("registry", () => {
       "marketcalls-vectorbt": { skillsPath: ".claude/skills", license: "MIT" },
       "agiprolabs-trading": { skillsPath: "skills", license: "MIT" },
       okx: { skillsPath: "skills", license: "MIT" },
+      "adspower-browser": { skillsPath: "skills", license: "MIT" },
     } as const;
     for (const [id, expected] of Object.entries(requestedSources)) {
       const source = catalog.skillSources[id];
@@ -261,6 +262,9 @@ describe("registry", () => {
     expect(Object.keys(catalog.rules)).toEqual(["codebase-memory", "parallel-agents"]);
     expect(catalog.agents["review-team"]?.type).toBe("team");
     expect(catalog.profiles.some((profile) => profile.id === "architecture")).toBe(true);
+    expect(catalog.profiles.find((profile) => profile.id === "browser")?.skills).toEqual([
+      { source: "adspower-browser", path: "adspower-browser" },
+    ]);
   });
 
   test("rejects duplicate JSONC keys", async () => {

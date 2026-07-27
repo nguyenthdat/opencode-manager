@@ -442,6 +442,14 @@
       "skillsPath": "skills",
       "license": "MIT",
     },
+    "adspower-browser": {
+      "type": "git",
+      "title": "AdsPower Browser Skill",
+      "repository": "https://github.com/adspower/adspower-browser.git",
+      "revision": "06dc59d65e094365139134d22e8eacb95ebedd62",
+      "skillsPath": "skills",
+      "license": "MIT",
+    },
     "vercel": {
       "type": "git",
       "title": "Vercel Agent Skills",
@@ -781,7 +789,7 @@
       "description": "Browser testing, debugging, profiling, and profile automation.",
       "tags": ["browser", "testing"],
       "mcps": ["cloakbrowser", "playwright", "chrome.devtools", "firefox.devtools", "adspower-local-api"],
-      "skills": [],
+      "skills": [{ "source": "adspower-browser", "path": "adspower-browser" }],
     },
     {
       "id": "security",

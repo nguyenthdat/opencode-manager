@@ -409,6 +409,7 @@ The requested source expansion adds these pinned collections:
 | `marketcalls-vectorbt` | `marketcalls/vectorbt-backtesting-skills` | `.claude/skills`  |       6 |
 | `agiprolabs-trading`   | `agiprolabs/claude-trading-skills`        | `skills`          |      67 |
 | `okx`                  | `okx/agent-skills`                        | `skills`          |      11 |
+| `adspower-browser`     | `adspower/adspower-browser`               | `skills`          |       1 |
 
 `phuryn/pm-skill` does not exist; the registry uses the upstream repository's
 actual plural name, `phuryn/pm-skills`. The duplicated K-Dense request is
