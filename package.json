@@ -1,6 +1,6 @@
 {
   "name": "@nguyenthdat/opencode-manager",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "description": "Project-scoped OpenCode TUI manager for MCPs, plugins, rules, standalone agents, agent teams, and skills.",
   "keywords": [
     "agent-skills",

@@ -5,11 +5,9 @@ agents, agent teams, and skills that belong to each project. It combines
 repository-owned registries, pinned vendor skill sources, and reusable stack
 profiles.
 
-Normal manager resources never write to OpenCode's global config. Resource
-files are materialized under the active worktree's `.opencode/` directory;
-project config references may be patched in an existing root config as
-described below. Entries under **Installer Registry** are the explicit
-exception: the confirmation dialog identifies their global scope before setup.
+Manager resources never write to OpenCode's global config. Resource files are
+materialized under the active worktree's `.opencode/` directory; project config
+references may be patched in an existing root config as described below.
 
 ## What it manages
 
@@ -17,8 +15,6 @@ exception: the confirmation dialog identifies their global scope before setup.
   `registry/catalog.jsonc`.
 - **Plugin registry:** reviewed OpenCode plugin packages added only to the
   active project's `plugin` config array.
-- **Installer registry:** pinned external tool suites that require their own
-  setup workflow, with explicit global-scope confirmation.
 - **Custom skills:** skills maintained in this repository under
   `registry/skills/<name>/SKILL.md`.
 - **Vendor skills:** reproducible, commit-pinned skill repositories from
@@ -106,7 +102,6 @@ The first screen contains:
 - Stack profiles, with the number of selected resources.
 - The complete MCP registry.
 - The project-local OpenCode plugin registry.
-- Pinned external installers such as gstack.
 - The project rule registry.
 - Standalone agents and folder-based agent teams.
 - Custom and vendor skill registries.
@@ -209,37 +204,6 @@ The bundled Svelte entry follows the official
 It supplies the Svelte MCP, Svelte skills, and the `svelte-file-editor`
 subagent.
 
-## Installer registry
-
-Installers cover external suites that cannot be represented as static
-project-local skill bundles:
-
-```jsonc
-{
-  "installers": {
-    "gstack": {
-      "type": "git",
-      "title": "gstack",
-      "description": "Pinned gstack setup for OpenCode.",
-      "tags": ["agents", "workflow"],
-      "repository": "https://github.com/garrytan/gstack.git",
-      "revision": "0123456789abcdef0123456789abcdef01234567",
-      "install": ["setup", "--host", "opencode", "--no-prefix", "--quiet"],
-      "cleanup": [{ "directory": ".config/opencode/skills", "prefix": "gstack" }],
-      "marker": ".config/opencode/skills/gstack/SKILL.md",
-      "license": "MIT",
-    },
-  },
-}
-```
-
-The manager clones the exact commit into the user's OpenCode Manager data
-directory and executes the declared repository-relative command without a
-shell. gstack then generates its OpenCode-specific skills and runtime links
-under `~/.config/opencode/skills/`. Removing it deletes only the declared
-`gstack` namespace from that directory, leaving gstack state and installs for
-other hosts untouched.
-
 ## Custom skill registry
 
 Create a normal OpenCode skill in this repository:
@@ -263,7 +227,7 @@ The TUI discovers it automatically under **OpenCode Manager Registry**. The
 entire skill directory, including scripts, references, assets, and nested
 skills, is copied as one bundle.
 
-The bundled registry currently includes 28 custom skills:
+The bundled registry currently includes 29 custom skills:
 
 - **Engineering workflows:** [`application-debugging`](registry/skills/application-debugging),
   [`native-binary-debugging`](registry/skills/native-binary-debugging),
@@ -273,6 +237,9 @@ The bundled registry currently includes 28 custom skills:
   [`codebase-design`](registry/skills/codebase-design),
   [`design-patterns`](registry/skills/design-patterns), and
   [`uniffi`](registry/skills/uniffi).
+- **Protocol and schema guidance:**
+  [`protobuf-best-practices`](registry/skills/protobuf-best-practices) for
+  Protobuf schema authoring, compatibility, evolution, and review.
 - **Language guidance:** Assembly, Bash, C, C++, C#, Go, Groovy, Java,
   JavaScript, Kotlin, Lua, Objective-C, PHP, PowerShell, Python, Ruby, Rust,
   Swift, TypeScript, and Zig.
@@ -419,8 +386,8 @@ to avoid its compatibility mirrors while retaining all 182 bundles.
 K-Dense uses mixed per-skill licenses, so no misleading source-wide license is
 declared. AGIPro currently includes three upstream stub skills and one broken
 cross-skill reference. Seven OKX bundles reference sibling
-`skills/_shared/preflight.md`; the current per-bundle installer does not copy
-that sibling helper, so those specific OKX bundles should be treated as having
+`skills/_shared/preflight.md`; the current per-bundle skill installation does
+not copy that sibling helper, so those specific OKX bundles should be treated as having
 an upstream packaging caveat. Same-name skills across different sources remain
 protected by the normal conflict and override workflow.
 

@@ -66,19 +66,22 @@ After configuration:
 
 ## Create a release
 
-Update `package.json` and `bun.lock` to the same semantic version, rebuild
-`dist`, and verify the project:
+Update `package.json` and any version metadata recorded in `bun.lock`, rebuild
+the git-ignored `dist` directory, and verify the project:
 
 ```bash
 bun install
 bun run format:check
+bun run clean
 bun run build
 bun run typecheck
 bun test
 npm pack --dry-run
 ```
 
-Commit the version and generated `dist` files. Create and push a matching tag:
+Commit the version and source/registry changes. Do not force-add `dist`; CI and
+the release workflow generate it before validating and packing the package.
+Create and push a matching tag:
 
 ```bash
 git tag v0.1.1

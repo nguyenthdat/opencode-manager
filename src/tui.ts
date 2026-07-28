@@ -10,7 +10,6 @@ import type {
 import type { JSX } from "@opentui/solid";
 import type {
   AgentStatus,
-  InstallerStatus,
   ManagerOptions,
   McpStatus,
   PluginStatus,
@@ -29,7 +28,6 @@ type Selection =
   | { type: "profile"; profile: ProfileStatus; parent: Parent }
   | { type: "mcp"; mcp: McpStatus; parent: Parent }
   | { type: "plugin"; plugin: PluginStatus; parent: Parent }
-  | { type: "installer"; installer: InstallerStatus; parent: Parent }
   | { type: "skill-source"; source: SkillSourceStatus; skills: SkillStatus[]; parent: Parent }
   | { type: "skill"; skill: SkillStatus; parent: Parent }
   | { type: "rule"; rule: RuleStatus; parent: Parent }
@@ -39,7 +37,6 @@ type DialogValue =
   | { type: "back" }
   | { type: "mcps" }
   | { type: "plugins" }
-  | { type: "installers" }
   | { type: "sync-registry" }
   | { type: "rules" }
   | { type: "agents" }
@@ -48,7 +45,7 @@ type DialogValue =
   | Selection;
 
 function isSelection(value: DialogValue): value is Selection {
-  return ["profile", "mcp", "plugin", "installer", "skill-source", "skill", "rule", "agent"].includes(value.type);
+  return ["profile", "mcp", "plugin", "skill-source", "skill", "rule", "agent"].includes(value.type);
 }
 
 interface State {
@@ -111,10 +108,6 @@ function pluginFooter(plugin: PluginStatus): string {
   return `${plugin.status} · ${plugin.ownership} · ${plugin.package}`;
 }
 
-function installerFooter(installer: InstallerStatus): string {
-  return `${installer.status} · ${installer.ownership} · global · ${installer.revision.slice(0, 8)}`;
-}
-
 function registrySyncFooter(state: State): string {
   if (!state.syncEnabled) return "disabled for custom catalog";
   if (state.syncingRegistry) return "syncing";
@@ -168,9 +161,8 @@ async function showManager(state: State): Promise<void> {
   if (state.syncingRegistry && state.registrySyncPromise) await state.registrySyncPromise;
   try {
     const api = await manager();
-    const [profiles, installers, sources] = await Promise.all([
+    const [profiles, sources] = await Promise.all([
       api.listProfiles(options(state)),
-      api.listInstallers(options(state)),
       api.listSkillSources(options(state)),
     ]);
     const rows: TuiDialogSelectOption<DialogValue>[] = [
@@ -194,12 +186,6 @@ async function showManager(state: State): Promise<void> {
         category: "Registries",
       },
       {
-        title: "Installer Registry",
-        value: { type: "installers" },
-        description: "Install pinned external tool suites that require their own setup lifecycle",
-        category: "Registries",
-      },
-      {
         title: "Rule Registry",
         value: { type: "rules" },
         description: "Install project instructions and keep project config references in sync",
@@ -212,13 +198,6 @@ async function showManager(state: State): Promise<void> {
         footer: registrySyncFooter(state),
         category: "Actions",
       },
-      ...installers.map((installer) => ({
-        title: installer.title,
-        value: { type: "installer", installer, parent: () => showManager(state) } satisfies DialogValue,
-        description: installer.description,
-        footer: installerFooter(installer),
-        category: "External Installers",
-      })),
       {
         title: "Agent Registry",
         value: { type: "agents" },
@@ -249,12 +228,10 @@ async function showManager(state: State): Promise<void> {
           if (option.value.type === "open-profile") void showProfile(state, option.value.profile.id);
           if (option.value.type === "mcps") void showMcps(state);
           if (option.value.type === "plugins") void showPlugins(state);
-          if (option.value.type === "installers") void showInstallers(state);
           if (option.value.type === "rules") void showRules(state);
           if (option.value.type === "agents") void showAgents(state);
           if (option.value.type === "open-source") void showSource(state, option.value.source.id);
           if (option.value.type === "sync-registry") void syncRemoteRegistry(state, true, false);
-          if (option.value.type === "installer") confirmToggle(state, option.value);
         },
       }),
     );
@@ -387,43 +364,6 @@ async function showPlugins(state: State): Promise<void> {
       state.api.ui.DialogSelect<DialogValue>({
         title: "Plugin Registry",
         placeholder: "Search OpenCode plugins · Enter/Space toggles",
-        options: rows,
-        onMove(option) {
-          state.selection = isSelection(option.value) ? option.value : undefined;
-        },
-        onFilter() {
-          state.selection = undefined;
-        },
-        onSelect(option) {
-          if (option.value.type === "back") void showManager(state);
-          else if (isSelection(option.value)) confirmToggle(state, option.value);
-        },
-      }),
-    );
-  } catch (error) {
-    state.api.ui.toast({ variant: "error", message: errorMessage(error) });
-  }
-}
-
-async function showInstallers(state: State): Promise<void> {
-  try {
-    const api = await manager();
-    const installers = await api.listInstallers(options(state));
-    const parent = () => showInstallers(state);
-    const rows: TuiDialogSelectOption<DialogValue>[] = [
-      navigation("Back to manager"),
-      ...installers.map((installer) => ({
-        title: installer.title,
-        value: { type: "installer", installer, parent } satisfies DialogValue,
-        description: `${installer.description} [${installer.id}]`,
-        footer: installerFooter(installer),
-        category: installer.tags[0] ?? "Installers",
-      })),
-    ];
-    replaceDialog(state, undefined, () =>
-      state.api.ui.DialogSelect<DialogValue>({
-        title: "Installer Registry",
-        placeholder: "Search external installers · Enter/Space installs or removes",
         options: rows,
         onMove(option) {
           state.selection = isSelection(option.value) ? option.value : undefined;
@@ -579,7 +519,6 @@ function selectionEnabled(selection: Selection): boolean {
   if (selection.type === "profile") return selection.profile.status === "enabled";
   if (selection.type === "mcp") return selection.mcp.enabled;
   if (selection.type === "plugin") return selection.plugin.enabled;
-  if (selection.type === "installer") return selection.installer.status === "managed";
   if (selection.type === "skill-source") {
     return (
       selection.skills.length > 0 &&
@@ -596,7 +535,6 @@ function selectionLabel(selection: Selection): string {
   if (selection.type === "profile") return selection.profile.title;
   if (selection.type === "mcp") return selection.mcp.title;
   if (selection.type === "plugin") return selection.plugin.title;
-  if (selection.type === "installer") return selection.installer.title;
   if (selection.type === "skill-source") return `all ${selection.source.title} skills`;
   if (selection.type === "skill") return selection.skill.name;
   if (selection.type === "rule") return selection.rule.title;
@@ -617,7 +555,6 @@ function selectionConflict(selection: Selection, enabled: boolean): boolean {
   if (selection.type === "profile") return selection.profile.status === "conflict";
   if (selection.type === "mcp") return selection.mcp.status === "conflict";
   if (selection.type === "plugin") return selection.plugin.status === "conflict";
-  if (selection.type === "installer") return false;
   if (selection.type === "skill-source") {
     return selection.skills.some((skill) =>
       enabled ? skill.status === "conflict" || skill.status === "modified" : skill.status === "modified",
@@ -629,23 +566,14 @@ function selectionConflict(selection: Selection, enabled: boolean): boolean {
 }
 
 function confirmToggle(state: State, selection: Selection, forcedEnabled?: boolean): void {
-  if (selection.type === "installer" && selection.installer.status === "conflict") {
-    state.api.ui.toast({
-      variant: "error",
-      message: `${selection.installer.title} has an external installation; manager will not replace or remove it.`,
-    });
-    return;
-  }
   const enabled = forcedEnabled ?? !selectionEnabled(selection);
   const label = selectionLabel(selection);
   const scope =
     selection.type === "profile"
       ? "Every registry resource in this profile"
-      : selection.type === "installer"
-        ? "This global OpenCode tool suite"
-        : selection.type === "skill-source"
-          ? `Every skill in this source (${selection.skills.length})`
-          : "This resource";
+      : selection.type === "skill-source"
+        ? `Every skill in this source (${selection.skills.length})`
+        : "This resource";
   const hasConflict = selectionConflict(selection, enabled);
   const conflict =
     selection.type === "mcp" && selection.mcp.status === "conflict"
@@ -654,28 +582,21 @@ function confirmToggle(state: State, selection: Selection, forcedEnabled?: boole
         ? "\n\nThis plugin has a different version or options; an approved replacement or removal is backed up first."
         : selection.type === "plugin" && selection.plugin.ownership === "inherited" && !enabled
           ? "\n\nInherited plugins cannot be disabled project-locally; remove it from the parent or global config."
-          : selection.type === "installer" && selection.installer.status === "modified"
-            ? "\n\nThe installed revision differs from the registry pin; enabling replaces the managed source and reruns setup."
-            : selection.type === "installer" && selection.installer.status === "conflict"
-              ? "\n\nAn external installation owns this namespace; manager will refuse to replace or remove it."
-              : selection.type === "skill-source" && hasConflict
-                ? "\n\nOne or more skills conflict with or were modified in the project; approved replacements or removals are archived first."
-                : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
-                  ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
-                  : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
-                    ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
-                    : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
-                      ? selection.agent.ownership === "inherited"
-                        ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
-                        : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
-                      : "";
+          : selection.type === "skill-source" && hasConflict
+            ? "\n\nOne or more skills conflict with or were modified in the project; approved replacements or removals are archived first."
+            : selection.type === "skill" && ["conflict", "modified"].includes(selection.skill.status)
+              ? "\n\nThis skill conflicts with or was modified in the project; manager will not overwrite it."
+              : selection.type === "rule" && ["conflict", "modified"].includes(selection.rule.status)
+                ? "\n\nThis rule conflicts with or was modified in the project; an approved replacement is archived first."
+                : selection.type === "agent" && ["conflict", "modified"].includes(selection.agent.status)
+                  ? selection.agent.ownership === "inherited"
+                    ? "\n\nA same-name inherited agent exists; enabling this resource will shadow it only in this project."
+                    : "\n\nThis agent resource conflicts with or was modified in the project; an approved replacement is archived first."
+                  : "";
   const busy = activeSessionBusy(state.api)
     ? "\n\nThe active session is busy and may be interrupted when OpenCode reloads."
     : "";
-  const scopeMessage =
-    selection.type === "installer"
-      ? `The pinned installer will be ${enabled ? "run" : "removed"} globally under your home directory.`
-      : `${scope} will be ${enabled ? "installed/enabled" : "removed/disabled"} only for this project.`;
+  const scopeMessage = `${scope} will be ${enabled ? "installed/enabled" : "removed/disabled"} only for this project.`;
 
   replaceDialog(state, undefined, () =>
     state.api.ui.DialogConfirm({
@@ -745,13 +666,6 @@ async function applyToggle(state: State, selection: Selection, enabled: boolean,
       await api.setMcpEnabled(options(state), selection.mcp.id, enabled, { override });
     } else if (selection.type === "plugin") {
       await api.setPluginEnabled(options(state), selection.plugin.id, enabled, { override });
-    } else if (selection.type === "installer") {
-      state.api.ui.toast({
-        variant: "info",
-        message: `${enabled ? "Running" : "Removing"} global installer ${label}...`,
-        duration: 2500,
-      });
-      await api.setInstallerEnabled(options(state), selection.installer.id, enabled);
     } else if (selection.type === "skill-source") {
       await api.setSkillSourceEnabled(options(state), selection.source.id, enabled, { override });
     } else if (selection.type === "skill") {
@@ -766,10 +680,7 @@ async function applyToggle(state: State, selection: Selection, enabled: boolean,
     await reloadProject(state);
     state.api.ui.toast({
       variant: "success",
-      message:
-        selection.type === "installer"
-          ? `${label} ${enabled ? "installed" : "removed"} globally for OpenCode.`
-          : `${label} ${enabled ? "enabled" : "disabled"} for this project.`,
+      message: `${label} ${enabled ? "enabled" : "disabled"} for this project.`,
     });
     await selection.parent();
   } catch (error) {
@@ -818,7 +729,7 @@ const tui: TuiPlugin = async (api, pluginOptions) => {
       {
         name: "opencode_manager_open",
         title: "Project Stack Manager",
-        desc: "Manage project MCPs, plugins, installers, rules, agents, skills, and stack profiles",
+        desc: "Manage project MCPs, plugins, rules, agents, skills, and stack profiles",
         category: "Project",
         namespace: "palette",
         slashName: "manager",

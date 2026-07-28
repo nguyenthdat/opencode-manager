@@ -44,10 +44,12 @@ jobs:
       - name: Build
         run: bun run build
 
-      - name: Verify generated files are current
+      - name: Verify build outputs
         run: |
-          git diff --exit-code -- dist
-          test -z "$(git status --porcelain --untracked-files=all -- dist)"
+          test -f dist/manager.js
+          test -f dist/manager.d.ts
+          test -f dist/tui.js
+          test -f dist/tui.d.ts
 
       - name: Audit dependencies
         run: bun audit

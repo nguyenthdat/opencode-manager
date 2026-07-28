@@ -24,6 +24,12 @@ active project's `.opencode/skills/` directory.
 | [`design-patterns`](design-patterns) | GoF and modern pattern selection with idiomatic language implementations |
 | [`uniffi`](uniffi) | Rust bindings for Kotlin and Swift through UniFFI |
 
+### Protocol and schema guidance
+
+| Skill | Scope |
+| --- | --- |
+| [`protobuf-best-practices`](protobuf-best-practices) | Protobuf schema authoring, compatibility, evolution, and review |
+
 ### Language guidance
 
 | Skill | Scope |
