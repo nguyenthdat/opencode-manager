@@ -94,7 +94,8 @@
     "access": "public"
   },
   "overrides": {
-    "@babel/core": "7.29.7"
+    "@babel/core": "7.29.7",
+    "brace-expansion": "5.0.8"
   },
   "devDependencies": {
     "@opencode-ai/plugin": "1.18.4",
