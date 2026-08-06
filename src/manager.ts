@@ -836,7 +836,7 @@ async function withLockFile<T>(file: string, fn: () => Promise<T>): Promise<T> {
   }
 }
 
-async function withProjectLock<T>(context: ProjectContext, fn: () => Promise<T>): Promise<T> {
+async function ensureManagerDirectory(context: ProjectContext): Promise<void> {
   await mkdir(context.managerDir, { recursive: true });
   const canonicalManagerDir = await realpath(context.managerDir);
   if (canonicalManagerDir !== context.managerDir || !isWithin(canonicalManagerDir, context.configDir)) {
@@ -852,6 +852,10 @@ async function withProjectLock<T>(context: ProjectContext, fn: () => Promise<T>)
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
   }
+}
+
+async function withProjectLock<T>(context: ProjectContext, fn: () => Promise<T>): Promise<T> {
+  await ensureManagerDirectory(context);
   return withLockFile(context.lockFile, fn);
 }
 
@@ -1628,6 +1632,7 @@ export async function syncRegistry(
 }
 
 async function ensureGitSource(context: ProjectContext, id: string, source: GitSkillSource): Promise<string> {
+  await ensureManagerDirectory(context);
   const cacheDir = await ensureContainedDirectory(context.cacheDir, context.managerDir, "vendor cache");
   const target = join(cacheDir, id);
   if (!isWithin(target, context.managerDir)) throw new Error(`[opencode-manager] Invalid cache path for "${id}"`);

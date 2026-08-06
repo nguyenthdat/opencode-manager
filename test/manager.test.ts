@@ -690,6 +690,56 @@ describe("project plugin registry", () => {
 });
 
 describe("project skill registry", () => {
+  test("ignores a nested Git skill cache before installing and removing it", async () => {
+    const value = await fixture();
+    await git(value.projectRoot, "init");
+    const repository = "https://example.com/hallmark.git";
+    const cacheRoot = join(value.projectRoot, ".opencode", ".opencode-manager", "cache", "hallmark");
+    const skillRoot = join(cacheRoot, "skills", "hallmark");
+    await mkdir(skillRoot, { recursive: true });
+    await writeFile(
+      join(skillRoot, "SKILL.md"),
+      `---\nname: hallmark\ndescription: Nested Git skill used to verify cache isolation.\n---\n\n# Hallmark\n`,
+    );
+    await git(cacheRoot, "init");
+    await git(cacheRoot, "add", ".");
+    await git(
+      cacheRoot,
+      "-c",
+      "user.name=Fixture",
+      "-c",
+      "user.email=fixture@example.com",
+      "commit",
+      "-m",
+      "Add nested skill",
+    );
+    await git(cacheRoot, "remote", "add", "origin", repository);
+    const revision = await git(cacheRoot, "rev-parse", "HEAD");
+    const catalog = JSON.parse(await readFile(value.catalogPath, "utf8"));
+    catalog.skillSources.hallmark = {
+      type: "git",
+      title: "Hallmark",
+      repository,
+      revision,
+      skillsPath: "skills",
+    };
+    await writeFile(value.catalogPath, `${JSON.stringify(catalog, null, 2)}\n`);
+
+    const skills = await listSkills(value.options, "hallmark");
+    expect(skills.map((skill) => skill.path)).toEqual(["hallmark"]);
+    const cachePath = ".opencode/.opencode-manager/cache/hallmark";
+    expect(await git(value.projectRoot, "check-ignore", cachePath)).toBe(cachePath);
+
+    const installed = await setSkillEnabled(value.options, "hallmark", "hallmark", true);
+    expect(installed.status).toBe("managed");
+    const destination = join(value.projectRoot, ".opencode", "skills", "hallmark");
+    expect(await readFile(join(destination, "SKILL.md"), "utf8")).toContain("name: hallmark");
+
+    const removed = await setSkillEnabled(value.options, "hallmark", "hallmark", false);
+    expect(removed.status).toBe("absent");
+    expect(await exists(destination)).toBe(false);
+  });
+
   test("installs a complete bundle and protects local modifications", async () => {
     const value = await fixture();
     const before = await listSkills(value.options, "custom");
